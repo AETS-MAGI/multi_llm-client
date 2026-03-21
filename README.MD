@@ -1,5 +1,7 @@
 # multi_llm-client (AETS-MAGI fork)
 
+Japanese version: [README.ja.md](./README.ja.md)
+
 Lightweight Rust CLI client for local LLM inference.
 This fork is focused on reproducible experiments with Ollama, especially on ROCm `gfx900` (Radeon Instinct MI25).
 
