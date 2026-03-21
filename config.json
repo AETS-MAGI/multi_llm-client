@@ -4,14 +4,17 @@
   "use_local_model": true,
   "local_framework": "ollama",
   "openai_compatible": false,
-  "max_tokens": 128,
+  "max_tokens": null,
   "api_key": null,
   "stream": true,
-  "temperature": 0.7,
-  "num_ctx": 4096,
-  "num_batch": 256,
+  "inline_stream": true,
+  "temperature": 0.0,
+  "num_ctx": null,
+  "num_batch": null,
   "keep_alive": "10m",
   "request_timeout_secs": 300,
   "connect_timeout_secs": 5,
-  "gfx900_preset": true
+  "preset": "gfx900_safe",
+  "python_command": "python3",
+  "log_dir": "logs"
 }

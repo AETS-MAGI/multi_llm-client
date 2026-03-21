@@ -1,10 +1,10 @@
 use std::fs;
 use std::io::{self, Write};
 use std::path::Path;
-use std::time::Duration;
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use futures_util::StreamExt;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use tokio::process::Command;
 
@@ -14,41 +14,85 @@ const DEFAULT_CONFIG: &str = r#"{
   "use_local_model": true,
   "local_framework": "ollama",
   "openai_compatible": false,
-  "max_tokens": 128,
+  "max_tokens": null,
   "api_key": null,
   "stream": true,
-  "temperature": 0.7,
+  "inline_stream": true,
+  "temperature": 0.0,
   "num_ctx": null,
   "num_batch": null,
   "keep_alive": "10m",
   "request_timeout_secs": 300,
   "connect_timeout_secs": 5,
-  "gfx900_preset": true
+  "preset": "gfx900_safe",
+  "python_command": "python3",
+  "log_dir": "logs"
 }"#;
+
+#[derive(Debug, Deserialize, Clone, Serialize)]
+#[serde(rename_all = "snake_case")]
+enum LocalFramework {
+    Ollama,
+    Python,
+}
+
+impl Default for LocalFramework {
+    fn default() -> Self {
+        Self::Ollama
+    }
+}
+
+#[derive(Debug, Deserialize, Clone, Serialize)]
+#[serde(rename_all = "snake_case")]
+enum Preset {
+    Default,
+    Gfx900Safe,
+    Gfx900Balanced,
+    Gfx900Longctx,
+    Gfx900Tinybench,
+}
+
+impl Default for Preset {
+    fn default() -> Self {
+        Self::Default
+    }
+}
 
 #[derive(Debug, Deserialize, Clone)]
 struct Config {
     model_name: String,
     endpoint: Option<String>,
     use_local_model: bool,
-    local_framework: Option<String>,
+    local_framework: Option<LocalFramework>,
     openai_compatible: bool,
     max_tokens: Option<u32>,
     api_key: Option<String>,
 
     stream: Option<bool>,
+    inline_stream: Option<bool>,
     temperature: Option<f32>,
     num_ctx: Option<u32>,
     num_batch: Option<u32>,
     keep_alive: Option<String>,
     request_timeout_secs: Option<u64>,
     connect_timeout_secs: Option<u64>,
+
+    // Preferred modern preset key.
+    preset: Option<Preset>,
+    // Backward-compat key from previous revision.
     gfx900_preset: Option<bool>,
+
+    python_command: Option<String>,
+    log_dir: Option<String>,
 }
 
 impl Config {
     fn stream_enabled(&self) -> bool {
         self.stream.unwrap_or(true)
+    }
+
+    fn render_stream_inline(&self) -> bool {
+        self.inline_stream.unwrap_or(true)
     }
 
     fn endpoint_for_ollama(&self) -> String {
@@ -57,35 +101,69 @@ impl Config {
             .unwrap_or_else(|| "http://127.0.0.1:11434/api/generate".to_string())
     }
 
-    fn framework(&self) -> &str {
-        self.local_framework.as_deref().unwrap_or("ollama")
+    fn framework(&self) -> LocalFramework {
+        self.local_framework.clone().unwrap_or_default()
     }
 
-    fn gfx900_enabled(&self) -> bool {
-        self.gfx900_preset.unwrap_or(false)
+    fn preset(&self) -> Preset {
+        if let Some(preset) = &self.preset {
+            return preset.clone();
+        }
+
+        if self.gfx900_preset.unwrap_or(false) {
+            Preset::Gfx900Safe
+        } else {
+            Preset::Default
+        }
+    }
+
+    fn python_command(&self) -> &str {
+        self.python_command.as_deref().unwrap_or("python3")
+    }
+
+    fn log_dir(&self) -> &str {
+        self.log_dir.as_deref().unwrap_or("logs")
     }
 
     fn effective_max_tokens(&self) -> u32 {
-        if self.gfx900_enabled() {
-            self.max_tokens.unwrap_or(128)
-        } else {
-            self.max_tokens.unwrap_or(256)
+        if let Some(v) = self.max_tokens {
+            return v;
+        }
+
+        match self.preset() {
+            Preset::Default => 256,
+            Preset::Gfx900Safe => 128,
+            Preset::Gfx900Balanced => 192,
+            Preset::Gfx900Longctx => 128,
+            Preset::Gfx900Tinybench => 32,
         }
     }
 
     fn effective_num_ctx(&self) -> Option<u32> {
-        if self.gfx900_enabled() {
-            Some(self.num_ctx.unwrap_or(4096))
-        } else {
-            self.num_ctx
+        if self.num_ctx.is_some() {
+            return self.num_ctx;
+        }
+
+        match self.preset() {
+            Preset::Default => None,
+            Preset::Gfx900Safe => Some(4096),
+            Preset::Gfx900Balanced => Some(4096),
+            Preset::Gfx900Longctx => Some(8192),
+            Preset::Gfx900Tinybench => Some(2048),
         }
     }
 
     fn effective_num_batch(&self) -> Option<u32> {
-        if self.gfx900_enabled() {
-            Some(self.num_batch.unwrap_or(256))
-        } else {
-            self.num_batch
+        if self.num_batch.is_some() {
+            return self.num_batch;
+        }
+
+        match self.preset() {
+            Preset::Default => None,
+            Preset::Gfx900Safe => Some(256),
+            Preset::Gfx900Balanced => Some(512),
+            Preset::Gfx900Longctx => Some(128),
+            Preset::Gfx900Tinybench => Some(64),
         }
     }
 
@@ -98,7 +176,10 @@ impl Config {
     }
 
     fn should_stream_inline(&self) -> bool {
-        self.stream_enabled() && !self.openai_compatible && self.framework() == "ollama"
+        self.stream_enabled()
+            && self.render_stream_inline()
+            && !self.openai_compatible
+            && matches!(self.framework(), LocalFramework::Ollama)
     }
 }
 
@@ -118,13 +199,204 @@ fn load_config(path: &str) -> Config {
     serde_json::from_str(&config_data).expect("JSONのパースに失敗しました")
 }
 
+#[derive(Debug, Clone, Serialize)]
+struct EffectiveConfig {
+    model_name: String,
+    endpoint: Option<String>,
+    use_local_model: bool,
+    framework: LocalFramework,
+    openai_compatible: bool,
+    stream: bool,
+    inline_stream: bool,
+    temperature: Option<f32>,
+    keep_alive: Option<String>,
+    preset: Preset,
+    max_tokens: u32,
+    num_ctx: Option<u32>,
+    num_batch: Option<u32>,
+    connect_timeout_secs: u64,
+    request_timeout_secs: u64,
+}
+
+impl EffectiveConfig {
+    fn from_config(config: &Config) -> Self {
+        Self {
+            model_name: config.model_name.clone(),
+            endpoint: config.endpoint.clone(),
+            use_local_model: config.use_local_model,
+            framework: config.framework(),
+            openai_compatible: config.openai_compatible,
+            stream: config.stream_enabled(),
+            inline_stream: config.render_stream_inline(),
+            temperature: config.temperature,
+            keep_alive: config.keep_alive.clone(),
+            preset: config.preset(),
+            max_tokens: config.effective_max_tokens(),
+            num_ctx: config.effective_num_ctx(),
+            num_batch: config.effective_num_batch(),
+            connect_timeout_secs: config.connect_timeout().as_secs(),
+            request_timeout_secs: config.request_timeout().as_secs(),
+        }
+    }
+}
+
 struct App {
     config: Config,
+    effective: EffectiveConfig,
     client: reqwest::Client,
+}
+
+#[derive(Debug, Default, Clone)]
+struct OllamaChunk {
+    token: String,
+    done: bool,
+    prompt_eval_count: Option<u64>,
+    prompt_eval_duration: Option<u64>,
+    eval_count: Option<u64>,
+    eval_duration: Option<u64>,
+    total_duration: Option<u64>,
+    load_duration: Option<u64>,
+}
+
+#[derive(Debug, Default, Clone, Serialize)]
+struct OllamaFinalMetrics {
+    prompt_eval_count: Option<u64>,
+    prompt_eval_duration: Option<u64>,
+    eval_count: Option<u64>,
+    eval_duration: Option<u64>,
+    total_duration: Option<u64>,
+    load_duration: Option<u64>,
+}
+
+#[derive(Debug)]
+struct InferenceStats {
+    started_at: Instant,
+    first_token_at: Option<Instant>,
+    finished_at: Option<Instant>,
+    output_chars: usize,
+    final_metrics: OllamaFinalMetrics,
+}
+
+impl InferenceStats {
+    fn new() -> Self {
+        Self {
+            started_at: Instant::now(),
+            first_token_at: None,
+            finished_at: None,
+            output_chars: 0,
+            final_metrics: OllamaFinalMetrics::default(),
+        }
+    }
+
+    fn absorb_chunk(&mut self, chunk: &OllamaChunk) {
+        if chunk.done && self.final_metrics.total_duration.is_none() {
+            // done=true arrives before/with final metrics depending on backend behavior.
+        }
+
+        if !chunk.token.is_empty() {
+            if self.first_token_at.is_none() {
+                self.first_token_at = Some(Instant::now());
+            }
+            self.output_chars += chunk.token.chars().count();
+        }
+
+        if chunk.prompt_eval_count.is_some() {
+            self.final_metrics.prompt_eval_count = chunk.prompt_eval_count;
+        }
+        if chunk.prompt_eval_duration.is_some() {
+            self.final_metrics.prompt_eval_duration = chunk.prompt_eval_duration;
+        }
+        if chunk.eval_count.is_some() {
+            self.final_metrics.eval_count = chunk.eval_count;
+        }
+        if chunk.eval_duration.is_some() {
+            self.final_metrics.eval_duration = chunk.eval_duration;
+        }
+        if chunk.total_duration.is_some() {
+            self.final_metrics.total_duration = chunk.total_duration;
+        }
+        if chunk.load_duration.is_some() {
+            self.final_metrics.load_duration = chunk.load_duration;
+        }
+    }
+
+    fn finish(&mut self) {
+        self.finished_at = Some(Instant::now());
+    }
+
+    fn total_ms(&self) -> u128 {
+        self.finished_at
+            .map(|t| t.duration_since(self.started_at).as_millis())
+            .unwrap_or(0)
+    }
+
+    fn ttft_ms(&self) -> Option<u128> {
+        self.first_token_at
+            .map(|t| t.duration_since(self.started_at).as_millis())
+    }
+
+    fn approx_tok_per_sec(&self) -> Option<f64> {
+        match (
+            self.final_metrics.eval_count,
+            self.final_metrics.eval_duration,
+        ) {
+            (Some(count), Some(duration_ns)) if duration_ns > 0 => {
+                Some(count as f64 / (duration_ns as f64 / 1_000_000_000.0))
+            }
+            _ => None,
+        }
+    }
+
+    fn print_summary(&self) {
+        match (self.ttft_ms(), self.approx_tok_per_sec()) {
+            (Some(ttft), Some(tok_s)) => println!(
+                "[stats] ttft={}ms total={}ms output_chars={} eval_count={:?} tok/s={:.2}",
+                ttft,
+                self.total_ms(),
+                self.output_chars,
+                self.final_metrics.eval_count,
+                tok_s
+            ),
+            (Some(ttft), None) => println!(
+                "[stats] ttft={}ms total={}ms output_chars={} eval_count={:?}",
+                ttft,
+                self.total_ms(),
+                self.output_chars,
+                self.final_metrics.eval_count
+            ),
+            (None, Some(tok_s)) => println!(
+                "[stats] ttft=n/a total={}ms output_chars={} eval_count={:?} tok/s={:.2}",
+                self.total_ms(),
+                self.output_chars,
+                self.final_metrics.eval_count,
+                tok_s
+            ),
+            (None, None) => println!(
+                "[stats] ttft=n/a total={}ms output_chars={} eval_count={:?}",
+                self.total_ms(),
+                self.output_chars,
+                self.final_metrics.eval_count
+            ),
+        }
+    }
+}
+
+#[derive(Debug, Serialize)]
+struct InferenceLogRecord {
+    ts_unix_secs: u64,
+    prompt_chars: usize,
+    response_chars: usize,
+    ttft_ms: Option<u128>,
+    total_ms: u128,
+    approx_tok_per_sec: Option<f64>,
+    error: Option<String>,
+    effective: EffectiveConfig,
+    ollama_metrics: OllamaFinalMetrics,
 }
 
 impl App {
     fn new(config: Config) -> Result<Self, String> {
+        let effective = EffectiveConfig::from_config(&config);
         let client = reqwest::Client::builder()
             .connect_timeout(config.connect_timeout())
             .timeout(config.request_timeout())
@@ -133,15 +405,19 @@ impl App {
             .pool_idle_timeout(Duration::from_secs(90))
             .build()
             .map_err(|e| format!("HTTPクライアント生成エラー: {e}"))?;
-        Ok(Self { config, client })
+
+        Ok(Self {
+            config,
+            effective,
+            client,
+        })
     }
 
     async fn infer(&self, prompt: &str) -> String {
         if self.config.use_local_model {
             match self.config.framework() {
-                "python" => self.python_inference(prompt).await,
-                "ollama" => self.ollama_inference(prompt).await,
-                other => format!("サポートされていないローカルフレームワークです: {other}"),
+                LocalFramework::Python => self.python_inference(prompt).await,
+                LocalFramework::Ollama => self.ollama_inference(prompt).await,
             }
         } else if self.config.openai_compatible {
             self.openai_compatible_inference(prompt).await
@@ -156,14 +432,27 @@ impl App {
         } else if Path::new("./llm_interface.py").exists() {
             "./llm_interface.py"
         } else {
-            return "Pythonスクリプトが見つかりません（./src/llm_interface.py または ./llm_interface.py）".to_string();
+            return "Pythonスクリプトが見つかりません（./src/llm_interface.py または ./llm_interface.py）"
+                .to_string();
         };
 
-        let output = Command::new("python")
+        let primary_cmd = self.config.python_command();
+        let output = match Command::new(primary_cmd)
             .arg(script_path)
             .arg(prompt)
             .output()
-            .await;
+            .await
+        {
+            Ok(out) => Ok(out),
+            Err(e) if e.kind() == io::ErrorKind::NotFound && primary_cmd != "python" => {
+                Command::new("python")
+                    .arg(script_path)
+                    .arg(prompt)
+                    .output()
+                    .await
+            }
+            Err(e) => Err(e),
+        };
 
         match output {
             Ok(output) => {
@@ -182,28 +471,25 @@ impl App {
 
     fn build_ollama_request(&self, prompt: &str) -> Value {
         let mut options = serde_json::Map::new();
-        options.insert(
-            "num_predict".to_string(),
-            json!(self.config.effective_max_tokens()),
-        );
+        options.insert("num_predict".to_string(), json!(self.effective.max_tokens));
 
-        if let Some(temp) = self.config.temperature {
+        if let Some(temp) = self.effective.temperature {
             options.insert("temperature".to_string(), json!(temp));
         }
-        if let Some(num_ctx) = self.config.effective_num_ctx() {
+        if let Some(num_ctx) = self.effective.num_ctx {
             options.insert("num_ctx".to_string(), json!(num_ctx));
         }
-        if let Some(num_batch) = self.config.effective_num_batch() {
+        if let Some(num_batch) = self.effective.num_batch {
             options.insert("num_batch".to_string(), json!(num_batch));
         }
 
         let mut root = serde_json::Map::new();
-        root.insert("model".to_string(), json!(self.config.model_name));
+        root.insert("model".to_string(), json!(self.effective.model_name));
         root.insert("prompt".to_string(), json!(prompt));
-        root.insert("stream".to_string(), json!(self.config.stream_enabled()));
+        root.insert("stream".to_string(), json!(self.effective.stream));
         root.insert("options".to_string(), Value::Object(options));
 
-        if let Some(keep_alive) = &self.config.keep_alive {
+        if let Some(keep_alive) = &self.effective.keep_alive {
             root.insert("keep_alive".to_string(), json!(keep_alive));
         }
 
@@ -213,7 +499,7 @@ impl App {
     async fn ollama_inference(&self, prompt: &str) -> String {
         let endpoint = self.config.endpoint_for_ollama();
         let request_body = self.build_ollama_request(prompt);
-        let mut req = self.client.post(endpoint).json(&request_body);
+        let mut req = self.client.post(&endpoint).json(&request_body);
 
         if let Some(api_key) = &self.config.api_key {
             req = req.bearer_auth(api_key);
@@ -221,31 +507,84 @@ impl App {
 
         let res = match req.send().await {
             Ok(response) => response,
-            Err(e) => return format!("[error] Ollama推論エラー: {e}"),
+            Err(e) => {
+                let err = format!("[error] Ollama推論エラー: {e}");
+                let _ = self.write_log(prompt, "", None, Some(err.clone()));
+                return err;
+            }
         };
 
-        if self.config.stream_enabled() {
-            self.consume_ollama_stream(res, true).await
-        } else {
-            self.consume_ollama_non_stream(res).await
+        if !res.status().is_success() {
+            let status = res.status();
+            let body = res
+                .text()
+                .await
+                .unwrap_or_else(|_| "<body read failed>".to_string());
+            let err = format!("[error] Ollama HTTPエラー: status={} body={}", status, body);
+            let _ = self.write_log(prompt, "", None, Some(err.clone()));
+            return err;
         }
+
+        let mut stats = InferenceStats::new();
+
+        let result = if self.effective.stream {
+            self.consume_ollama_stream(res, self.config.should_stream_inline(), &mut stats)
+                .await
+        } else {
+            self.consume_ollama_non_stream(res, &mut stats).await
+        };
+
+        stats.finish();
+        stats.print_summary();
+
+        let error_for_log = if result.starts_with("[error]") {
+            Some(result.clone())
+        } else {
+            None
+        };
+        let _ = self.write_log(prompt, &result, Some(&stats), error_for_log);
+
+        result
     }
 
-    async fn consume_ollama_non_stream(&self, response: reqwest::Response) -> String {
+    async fn consume_ollama_non_stream(
+        &self,
+        response: reqwest::Response,
+        stats: &mut InferenceStats,
+    ) -> String {
         let text = match response.text().await {
             Ok(text) => text,
             Err(e) => return format!("[error] レスポンス本文の取得に失敗: {e}"),
         };
 
         let mut collected = String::new();
-        for line in text.lines() {
-            if line.trim().is_empty() {
-                continue;
-            }
-            match parse_ollama_line(line) {
-                Ok(Some((token, _done))) => collected.push_str(&token),
-                Ok(None) => {}
+
+        // stream=false は通常「単一JSON」なので、まず全体を一括パースする。
+        if let Ok(val) = serde_json::from_str::<Value>(&text) {
+            match parse_ollama_value(&val) {
+                Ok(chunk) => {
+                    stats.absorb_chunk(&chunk);
+                    if !chunk.token.is_empty() {
+                        collected.push_str(&chunk.token);
+                    }
+                }
                 Err(e) => return format!("[error] {e}"),
+            }
+        } else {
+            // 互換性のため、NDJSON 形式で返る実装にもフォールバック対応する。
+            for line in text.lines() {
+                if line.trim().is_empty() {
+                    continue;
+                }
+                match parse_ollama_line(line) {
+                    Ok(chunk) => {
+                        stats.absorb_chunk(&chunk);
+                        if !chunk.token.is_empty() {
+                            collected.push_str(&chunk.token);
+                        }
+                    }
+                    Err(e) => return format!("[error] {e}"),
+                }
             }
         }
 
@@ -260,6 +599,7 @@ impl App {
         &self,
         response: reqwest::Response,
         render_stdout: bool,
+        stats: &mut InferenceStats,
     ) -> String {
         let mut stream = response.bytes_stream();
         let mut pending = String::new();
@@ -281,34 +621,33 @@ impl App {
                 }
 
                 match parse_ollama_line(&line) {
-                    Ok(Some((token, _done))) => {
-                        if !token.is_empty() {
+                    Ok(parsed) => {
+                        stats.absorb_chunk(&parsed);
+                        if !parsed.token.is_empty() {
                             if render_stdout {
-                                print!("{token}");
+                                print!("{}", parsed.token);
                                 let _ = io::stdout().flush();
                             }
-                            collected.push_str(&token);
+                            collected.push_str(&parsed.token);
                         }
                     }
-                    Ok(None) => {}
                     Err(e) => return format!("[error] {e}"),
                 }
             }
         }
 
-        // 改行終端なしで最後に1行残るケースを処理
         if !pending.trim().is_empty() {
             match parse_ollama_line(pending.trim()) {
-                Ok(Some((token, _done))) => {
-                    if !token.is_empty() {
+                Ok(parsed) => {
+                    stats.absorb_chunk(&parsed);
+                    if !parsed.token.is_empty() {
                         if render_stdout {
-                            print!("{token}");
+                            print!("{}", parsed.token);
                             let _ = io::stdout().flush();
                         }
-                        collected.push_str(&token);
+                        collected.push_str(&parsed.token);
                     }
                 }
-                Ok(None) => {}
                 Err(e) => return format!("[error] {e}"),
             }
         }
@@ -343,12 +682,23 @@ impl App {
             Err(e) => return format!("[error] OpenAI互換推論エラー: {e}"),
         };
 
+        if !res.status().is_success() {
+            let status = res.status();
+            let body = res
+                .text()
+                .await
+                .unwrap_or_else(|_| "<body read failed>".to_string());
+            return format!(
+                "[error] OpenAI互換HTTPエラー: status={} body={}",
+                status, body
+            );
+        }
+
         let json_val: Value = match res.json().await {
             Ok(v) => v,
             Err(e) => return format!("[error] OpenAI互換レスポンスJSON解析エラー: {e}"),
         };
 
-        // completion API / chat completion API どちらも拾えるようにする
         if let Some(text) = json_val
             .get("choices")
             .and_then(|c| c.get(0))
@@ -369,29 +719,148 @@ impl App {
 
         "[error] OpenAI互換レスポンスが不正です".to_string()
     }
+
+    fn write_log(
+        &self,
+        prompt: &str,
+        response: &str,
+        stats: Option<&InferenceStats>,
+        error: Option<String>,
+    ) -> Result<(), String> {
+        fs::create_dir_all(self.config.log_dir())
+            .map_err(|e| format!("ログディレクトリ作成失敗: {e}"))?;
+
+        let ts = current_unix_secs();
+        let path = format!("{}/infer-{}.jsonl", self.config.log_dir(), ts_to_ymd(ts));
+
+        let record = InferenceLogRecord {
+            ts_unix_secs: ts,
+            prompt_chars: prompt.chars().count(),
+            response_chars: response.chars().count(),
+            ttft_ms: stats.and_then(|s| s.ttft_ms()),
+            total_ms: stats.map(|s| s.total_ms()).unwrap_or(0),
+            approx_tok_per_sec: stats.and_then(|s| s.approx_tok_per_sec()),
+            error,
+            effective: self.effective.clone(),
+            ollama_metrics: stats.map(|s| s.final_metrics.clone()).unwrap_or_default(),
+        };
+
+        let line = serde_json::to_string(&record).map_err(|e| format!("ログJSON化失敗: {e}"))?;
+
+        let mut file = fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&path)
+            .map_err(|e| format!("ログファイルオープン失敗: {e}"))?;
+
+        writeln!(file, "{line}").map_err(|e| format!("ログ書き込み失敗: {e}"))?;
+        Ok(())
+    }
 }
 
-fn parse_ollama_line(line: &str) -> Result<Option<(String, bool)>, String> {
+fn parse_ollama_line(line: &str) -> Result<OllamaChunk, String> {
     let val: Value =
         serde_json::from_str(line).map_err(|e| format!("Ollamaレスポンス行のJSON解析失敗: {e}"))?;
+    parse_ollama_value(&val)
+}
+
+fn parse_ollama_value(val: &Value) -> Result<OllamaChunk, String> {
     if let Some(err) = val.get("error").and_then(|e| e.as_str()) {
         return Err(format!("Ollamaエラー: {err}"));
     }
 
-    let token = val
-        .get("response")
-        .and_then(|r| r.as_str())
-        .or_else(|| val.get("thinking").and_then(|t| t.as_str()))
-        .unwrap_or("")
-        .to_string();
-    let done = val.get("done").and_then(|d| d.as_bool()).unwrap_or(false);
-    Ok(Some((token, done)))
+    let chunk = OllamaChunk {
+        token: val
+            .get("response")
+            .and_then(|r| r.as_str())
+            .or_else(|| val.get("thinking").and_then(|t| t.as_str()))
+            .unwrap_or("")
+            .to_string(),
+        done: val.get("done").and_then(|d| d.as_bool()).unwrap_or(false),
+        prompt_eval_count: val.get("prompt_eval_count").and_then(as_u64_flexible),
+        prompt_eval_duration: val.get("prompt_eval_duration").and_then(as_u64_flexible),
+        eval_count: val.get("eval_count").and_then(as_u64_flexible),
+        eval_duration: val.get("eval_duration").and_then(as_u64_flexible),
+        total_duration: val.get("total_duration").and_then(as_u64_flexible),
+        load_duration: val.get("load_duration").and_then(as_u64_flexible),
+    };
+
+    Ok(chunk)
+}
+
+fn as_u64_flexible(v: &Value) -> Option<u64> {
+    if let Some(n) = v.as_u64() {
+        return Some(n);
+    }
+    if let Some(s) = v.as_str() {
+        return s.parse::<u64>().ok();
+    }
+    None
+}
+
+fn current_unix_secs() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs()
+}
+
+fn ts_to_ymd(ts: u64) -> String {
+    let days = ts / 86_400;
+    let z = days as i64 + 719_468;
+    let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
+    let doe = z - era * 146_097;
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+    let y = yoe + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let m = mp + if mp < 10 { 3 } else { -9 };
+    let year = y + if m <= 2 { 1 } else { 0 };
+
+    format!("{:04}-{:02}-{:02}", year, m, d)
+}
+
+fn print_effective_config(config: &Config, effective: &EffectiveConfig) {
+    println!("モデル: {}", effective.model_name);
+    println!(
+        "モード: {} / framework={:?}",
+        if config.use_local_model {
+            "local"
+        } else {
+            "online"
+        },
+        effective.framework
+    );
+    println!("preset: {:?}", effective.preset);
+    println!(
+        "stream: {} / inline_stream: {} / openai_compatible: {}",
+        if effective.stream { "on" } else { "off" },
+        if effective.inline_stream { "on" } else { "off" },
+        if effective.openai_compatible {
+            "on"
+        } else {
+            "off"
+        }
+    );
+    println!("effective_max_tokens: {}", effective.max_tokens);
+    println!("effective_num_ctx: {:?}", effective.num_ctx);
+    println!("effective_num_batch: {:?}", effective.num_batch);
+    println!(
+        "timeout: connect={}s request={}s",
+        effective.connect_timeout_secs, effective.request_timeout_secs
+    );
+    println!("keep_alive: {:?}", effective.keep_alive);
+    println!("endpoint: {:?}", effective.endpoint);
+    println!("python_command: {}", config.python_command());
+    println!("log_dir: {}", config.log_dir());
 }
 
 #[tokio::main]
 async fn main() {
     let config_path = "config.json";
     let config = load_config(config_path);
+
     let app = match App::new(config.clone()) {
         Ok(app) => app,
         Err(e) => {
@@ -400,21 +869,7 @@ async fn main() {
         }
     };
 
-    println!("モデル: {}", config.model_name);
-    println!(
-        "モード: {} / framework={}",
-        if config.use_local_model {
-            "local"
-        } else {
-            "online"
-        },
-        config.framework()
-    );
-    println!(
-        "gfx900 preset: {} / stream: {}",
-        if config.gfx900_enabled() { "on" } else { "off" },
-        if config.stream_enabled() { "on" } else { "off" }
-    );
+    print_effective_config(&config, &app.effective);
     println!("チャットクライアントを開始します（`/bye` または空行で終了）");
 
     loop {
@@ -426,8 +881,8 @@ async fn main() {
             println!("入力エラー");
             break;
         }
-        let prompt = prompt.trim();
 
+        let prompt = prompt.trim();
         if prompt.is_empty() || prompt == "/bye" {
             println!("バイバイ！またね！");
             break;
@@ -440,6 +895,7 @@ async fn main() {
         }
 
         let response = app.infer(prompt).await;
+
         if stream_inline {
             if response.starts_with("[error]") {
                 println!("{response}");

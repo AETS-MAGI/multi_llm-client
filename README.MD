@@ -1,241 +1,177 @@
-# **ローカルLLM推論環境**
+# multi_llm-client (AETS-MAGI fork)
 
-このリポジトリは、ローカル環境で大規模言語モデル（LLM）を実行するためのセットアップを提供します。
-モデルはHugging Face形式（`.safetensors`や`.bin`）で保存されており、Pythonスクリプトを使用して推論を行います。
+Lightweight Rust CLI client for local LLM inference.
+This fork is focused on reproducible experiments with Ollama, especially on ROCm `gfx900` (Radeon Instinct MI25).
 
-## 【朗報】りもこ、Rust初心者
+## Overview
 
-ちょっと脇道に逸れますが、こういう感じのことも書いとこうと思います。  
-というのも、昨年（2024年）、とある用事で80年代のCで書かれたプログラムを見ていて、当時のプログラマーの人たちのあたたかなコメントアウトがとても温かく、そしておもしろかったののが印象的で、自分もそういう感じにしよーと思ったからです。  
-当時は雑誌や電話、郵便でのコミュニケーションが主流だったからか、コメントアウトにもいろんなことが書いてありました。 
-「わからない時に助けてもらった、今度お酒でも持っていきます！」とか、そういうことも。  
-いまはネットでなんでもできますが、そういう技術者どうしのあたたかい交流とかっていう部分、いまだにありますよね。わたしは好きです。   
-そこで交わされていたエンジニアどうしの人間的なやりとりが、なんか心にぐっときたっていうか。そんな感じです。  
+`multi_llm-client` sends prompts to a local or compatible inference endpoint and provides:
 
-ちなみに、いまも、ネットの海の中にはこういう古いコードが漂ってますが、読んでみるとおもろいです。
+- Streaming and non-streaming response handling
+- Preset-based runtime tuning for `gfx900`
+- Effective configuration printout at startup
+- Basic inference metrics (`TTFT`, `total_ms`, `tok/s` when available)
+- JSONL logging for repeatable benchmark workflows
 
-実際、Cもコーディング規約が微妙に変わってきているので、当時のコードそのままでは動きませんでした。  
-他人が書いたコード、ましてやCなので、けっこうやっかいでした。  
-でも、そんなコードを読み解き、現代のCコンパイラにあわせた仕様に書き換えるときにも、途中にあるユーモアと愛に溢れたコメントに、だいぶ助けられました。  
+## What This Fork Adds
 
-で、そんなコードを見ていて、自分もそういう感じにしてみたいなーと思ったんです。  
-なので、今回は  READMEにこういうコメントを書いてみたいなーと思ったので書いてみました。
+Compared to the original early version, this fork adds:
 
-## 本当に初心者だよ？
+- Hardened HTTP error handling (status checks for Ollama/OpenAI-compatible endpoints)
+- Stable parsing path for `stream=false` responses
+- `preset`-based parameter control (`default`, `gfx900_safe`, etc.)
+- Backward compatibility with legacy `gfx900_preset`
+- `python_command` support (default `python3`, fallback to `python`)
+- Daily JSONL inference logs in configurable `log_dir`
 
-まぁ、Rustはちょこちょこは触ってたけど、ちゃんと作るのはじめてです。  
-なので、りもこはRust初心者です。**まじです**。  
-・・・でも異論は認めます。たぶん。
+## Requirements
 
-で、今回は・・・
+- Linux
+- Rust (recent stable via `rustup`)
+- Ollama running locally (`http://127.0.0.1:11434` by default)
+- Optional: ROCm + `gfx900` GPU for MI25 experiments
 
-「Rustの実装はo3-miniさんにいっぱいアドバイスもらいながらやったよ！」  
-「でも設計と方向性はりもこが決めたよ！」  
-「それを形にするのにRustを勉強しながら頑張ったよ！」  
-「それでできたものがこれだよ！」  
-「ぜひ遊んでね！」  
+## Quick Start
 
-って感じです。**ビバOpenAI!**
+1. Ensure Rust toolchain is available from rustup.
 
-## 🚀 Rust初心者りもこの今回の学びポイント！
-このプロジェクトを通して、りもこはこんなことを学んだよ！
+```bash
+export PATH="$HOME/.cargo/bin:$PATH"
+cargo --version
+```
 
-- Rustの型システムがめちゃくちゃしっかりしてる（安心感がやばい！）
-- C/C++よりメモリ管理が楽ちん！ 
-- 変数の所有権（Ownership）とライフタイム（Lifetime）がとにかく便利！
-- C/C++で心が折れた人にも試してほしい！！  
-- `async/await` での非同期処理も便利！    
-- `reqwest` でAPI通信を簡単にできるのもよき！
+2. Configure `config.json`.
 
-全体的には、
+3. Run the client.
 
-「CやC++のような低レベル言語でやっていたことが、Rustではこうやってやれるんだ！」 
+```bash
+cargo run
+```
 
-ってなことがわかって、個人的には大満足でした！  
-正直、C/C++やSwiftを触っていた人にはRustはとっつきやすいと思います。
-まぁ、もちろん「自分でガリガリメモリ管理してるぜ！」って感じはあんまりないけど、でもこれはこれでアリ！  
-そう思えるし、何より書いててめっちゃ楽しい！
+4. In the prompt, type text and press Enter. Use `/bye` or empty line to exit.
 
-*技術で遊ぶのは楽しい！*  
-*それを形にするのにRustは最適かもしれん！*
-
-そう思ったのでしたー。
-
----
-
-## **特徴**
-
-- **ローカル推論対応**
-    - `.safetensors`や`.bin`形式のモデルを利用してプライバシーを確保しつつ推論可能。
-- **柔軟なカスタマイズ**
-    - `config.json`でモデルや推論パラメータを簡単に設定可能。
-- **Hugging Face Transformers対応**
-    - Transformersライブラリを使用してモデルをロード＆推論。
-
-特に今回は、「APIの種類を判別してリクエストの形を変える」という部分がこだわりポイントです。
-
----
-
-## **新しい高速化ポイント（Rust client）**
-
-このリポジトリの `src/main.rs` は、ローカル Ollama（`/api/generate`）向けに以下を実装しています。
-
-- `reqwest::Client` の使い回し（接続再利用）
-- ストリーミング応答（NDJSON）を逐次表示
-- `gfx900_preset` 有効時の保守的設定
-  - `num_predict`（`max_tokens` 連動）
-  - `num_ctx`（既定 4096）
-  - `num_batch`（既定 256）
-- `keep_alive` / timeout 設定を `config.json` から制御
-
-`config.json` 例（要点）:
+## Example `config.json`
 
 ```json
 {
   "model_name": "tinyllama:latest",
   "endpoint": "http://127.0.0.1:11434/api/generate",
+  "use_local_model": true,
   "local_framework": "ollama",
+  "openai_compatible": false,
+  "max_tokens": null,
+  "api_key": null,
   "stream": true,
-  "gfx900_preset": true,
-  "num_ctx": 4096,
-  "num_batch": 256
+  "inline_stream": true,
+  "temperature": 0.0,
+  "num_ctx": null,
+  "num_batch": null,
+  "keep_alive": "10m",
+  "request_timeout_secs": 300,
+  "connect_timeout_secs": 5,
+  "preset": "gfx900_safe",
+  "python_command": "python3",
+  "log_dir": "logs"
 }
 ```
 
----
+## Configuration Reference
 
-## **Rust環境メモ**
+| Key | Type | Default | Description |
+|---|---|---|---|
+| `model_name` | string | required | Model name for backend |
+| `endpoint` | string or null | `http://127.0.0.1:11434/api/generate` | Target endpoint |
+| `use_local_model` | bool | `true` | Use local backend path |
+| `local_framework` | `ollama`/`python` | `ollama` | Local backend selection |
+| `openai_compatible` | bool | `false` | Use OpenAI-compatible request/response path |
+| `max_tokens` | number or null | preset-based | `num_predict` equivalent |
+| `api_key` | string or null | `null` | Bearer token when needed |
+| `stream` | bool | `true` | Transport mode |
+| `inline_stream` | bool | `true` | Render streaming tokens inline in CLI |
+| `temperature` | number or null | `null` | Sampling temperature |
+| `num_ctx` | number or null | preset-based | Context size override |
+| `num_batch` | number or null | preset-based | Batch size override |
+| `keep_alive` | string or null | `10m` | Ollama keep-alive |
+| `request_timeout_secs` | number | `300` | Request timeout |
+| `connect_timeout_secs` | number | `5` | Connect timeout |
+| `preset` | string | `default` | Runtime preset |
+| `gfx900_preset` | bool | `false` | Legacy compatibility key |
+| `python_command` | string | `python3` | Python executable |
+| `log_dir` | string | `logs` | JSONL output directory |
 
-- 依存クレートの都合で、`cargo check` には比較的新しい Rust toolchain が必要です。
-- もし `rustc 1.75` などで依存解決エラーが出る場合は、`rustup` で stable 更新を推奨します。
+## Presets
 
----
+If `max_tokens`, `num_ctx`, `num_batch` are not explicitly set, values are derived from `preset`.
 
-## **LLMのファイル構成例**
+| Preset | max_tokens | num_ctx | num_batch |
+|---|---:|---:|---:|
+| `default` | 256 | null | null |
+| `gfx900_safe` | 128 | 4096 | 256 |
+| `gfx900_balanced` | 192 | 4096 | 512 |
+| `gfx900_longctx` | 128 | 8192 | 128 |
+| `gfx900_tinybench` | 32 | 2048 | 64 |
 
-Hugging Faceのモデルページから以下のモデルをDLしたと仮定して・・・  
-https://huggingface.co/rinna/nekomata-7b/tree/main
+## Runtime Outputs
 
-ファイル構成例は以下の通りです。
+At startup, the client prints effective settings (model, preset, stream mode, resolved limits, timeouts).
+
+Each inference prints a metrics line such as:
+
+```text
+[stats] ttft=152ms total=3120ms output_chars=384 eval_count=96 tok/s=28.40
 ```
-.
-├── LICENSE                          # ライセンス情報
-├── NOTICE                           # ライセンスに関する追加情報
-├── README.md                        # このREADMEファイル
-├── config.json                      # 推論設定ファイル
-├── configuration_qwen.py            # モデル設定スクリプト
-├── cpp_kernels.py                   # カスタムCUDAカーネル（高速化用）
-├── model-00001-of-00002.safetensors # safetensors形式のモデルデータ（分割1）
-├── model-00002-of-00002.safetensors # safetensors形式のモデルデータ（分割2）
-├── model.safetensors.index.json     # safetensorsモデルのインデックスファイル
-├── modeling_qwen.py                 # モデルアーキテクチャ定義
-├── pytorch_model-00001-of-00002.bin # PyTorch形式のモデルデータ（分割1）
-├── pytorch_model-00002-of-00002.bin # PyTorch形式のモデルデータ（分割2）
-├── pytorch_model.bin.index.json     # PyTorchモデルのインデックスファイル
-├── qwen.tiktoken                    # トークナイザ関連ファイル
-├── qwen_generation_utils.py         # 推論処理用ユーティリティスクリプト
-├── rinna.png                        # サンプル画像またはロゴ？
-├── tokenizer_config.json            # トークナイザ設定ファイル
-└── cache_autogptq_cuda_*            # 自動生成されるCUDAキャッシュファイル
-```
 
+Logs are stored as JSONL:
 
-### **主要ファイル例**
+- Path: `log_dir/infer-YYYY-MM-DD.jsonl`
+- One record per inference
+- Includes prompt/response lengths, timing, effective config, and Ollama final metrics
 
-- `config.json`
-推論に必要な設定（モデル名、エンドポイントなど）を記述したJSONファイル。
+## Recommended gfx900 Benchmark Flow
 
-### **モデルデータの例**
-以下はRinna(nekomata-7b)を使用する場合の例です。  
-Hugging Faceのモデルページからモデルデータをダウンロードしてください。  
+1. Fix prompt/template and model.
+2. Use `temperature: 0.0` for stable comparisons.
+3. Keep preset fixed, then vary one parameter at a time (`num_batch`, `num_ctx`, `max_tokens`).
+4. Compare TTFT/total/tok/s from JSONL logs.
+5. Record external GPU telemetry (`rocm-smi`, `nvtop`) in parallel.
 
-https://huggingface.co/rinna/nekomata-7b/tree/main
+## Troubleshooting
 
-ダウンロードしたモデルデータは、`models`フォルダに配置してください。   
+### `Cargo.lock` version error on older cargo
 
-- `model-00001-of-00002.safetensors`, `model-00002-of-00002.safetensors`
-モデルデータ（safetensors形式）。複数ファイルに分割されています。
-- `pytorch_model-00001-of-00002.bin`, `pytorch_model-00002-of-00002.bin`
-モデルデータ（PyTorch形式）。
-- `tokenizer_config.json`
-トークナイザの設定ファイル。
-
-
-### **スクリプト**
-
-- `qwen_generation_utils.py`
-推論処理に必要なユーティリティ関数を含むスクリプト。
-- `configuration_qwen.py`, `modeling_qwen.py`
-モデルの設定やアーキテクチャに関連するコード。
-
----
-
-## **セットアップ**
-
-### **1. 必要なライブラリのインストール**
-
-以下のコマンドで必要なPythonライブラリをインストールします：
+If you see lockfile version errors, your shell may still resolve `/usr/bin/cargo` first.
 
 ```bash
-pip install torch transformers safetensors
+export PATH="$HOME/.cargo/bin:$PATH"
+cargo --version
 ```
 
+### HTTP 404 / model not found
 
-### **2. モデルデータの配置**
-
-モデルデータ（`.safetensors`または`.bin`）がリポジトリ内に存在することを確認してください。必要に応じて、Hugging Face Hubなどからダウンロードしてください。
-
----
-
-## **使い方**
-
-### **1. 設定ファイルの編集**
-
-`config.json` を編集し、使用するモデルやパラメータを指定します。以下はサンプルです：
-
-```json
-{
-  "model_name": "qwen",
-  "max_tokens": 128,
-  "temperature": 0.7
-}
-```
-
-
-### **2. 推論の実行**
-
-以下のコマンドで推論スクリプトを実行します：
+Check model availability in Ollama:
 
 ```bash
-python qwen_generation_utils.py --prompt "Why is the sky blue?"
+ollama list
 ```
 
-結果が標準出力に表示されます。
+### Connection refused
 
----
+Ensure Ollama is running and endpoint matches `config.json`:
 
-## **カスタマイズ**
+```bash
+curl http://127.0.0.1:11434/api/tags
+```
 
-### **1. モデルの切り替え**
+### Python backend command not found
 
-`config.json` の `"model_name"` を変更することで、別のモデルを使用できます。
+Set `python_command` explicitly, e.g. `python3`.
 
-### **2. パラメータ調整**
+## Project Scope
 
-以下のパラメータを変更することで、生成結果をカスタマイズできます：
+This repository is currently focused on practical local inference and tuning workflows.
+It is not a full-featured chat platform; it is a lightweight experimentation client.
 
-- `"max_tokens"`: 出力されるトークン数の最大値。
-- `"temperature"`: テキスト生成時のランダム性（低いほど決定的な応答）。
+## License
 
----
-
-## **注意事項**
-
-1. モデルサイズが非常に大きいため、十分なメモリとディスク容量が必要です。
-2. 推論速度はハードウェア性能（特にGPU）に依存します。GPUがない場合、推論が遅くなる可能性があります。
-
----
-
-## **ライセンス**
-
-このプロジェクトは、それぞれのライセンス条件に従って利用できます。
+No explicit license file is currently included in this repository snapshot.
+Set a repository license before broad external redistribution.

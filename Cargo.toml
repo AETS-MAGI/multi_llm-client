@@ -1,5 +1,5 @@
 [package]
-name = "milti_llm_client"
+name = "multi_llm_client"
 version = "0.1.0"
 edition = "2021"
 
