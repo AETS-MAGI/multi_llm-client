@@ -76,6 +76,41 @@
 
 ---
 
+## **新しい高速化ポイント（Rust client）**
+
+このリポジトリの `src/main.rs` は、ローカル Ollama（`/api/generate`）向けに以下を実装しています。
+
+- `reqwest::Client` の使い回し（接続再利用）
+- ストリーミング応答（NDJSON）を逐次表示
+- `gfx900_preset` 有効時の保守的設定
+  - `num_predict`（`max_tokens` 連動）
+  - `num_ctx`（既定 4096）
+  - `num_batch`（既定 256）
+- `keep_alive` / timeout 設定を `config.json` から制御
+
+`config.json` 例（要点）:
+
+```json
+{
+  "model_name": "tinyllama:latest",
+  "endpoint": "http://127.0.0.1:11434/api/generate",
+  "local_framework": "ollama",
+  "stream": true,
+  "gfx900_preset": true,
+  "num_ctx": 4096,
+  "num_batch": 256
+}
+```
+
+---
+
+## **Rust環境メモ**
+
+- 依存クレートの都合で、`cargo check` には比較的新しい Rust toolchain が必要です。
+- もし `rustc 1.75` などで依存解決エラーが出る場合は、`rustup` で stable 更新を推奨します。
+
+---
+
 ## **LLMのファイル構成例**
 
 Hugging Faceのモデルページから以下のモデルをDLしたと仮定して・・・  

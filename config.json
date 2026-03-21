@@ -1,9 +1,17 @@
 {
-  "model_name": "gemma2:9b",
-  "endpoint": "http://localhost:11434/api/generate",
+  "model_name": "tinyllama:latest",
+  "endpoint": "http://127.0.0.1:11434/api/generate",
   "use_local_model": true,
   "local_framework": "ollama",
   "openai_compatible": false,
-  "max_tokens": 64,
-  "api_key": null
+  "max_tokens": 128,
+  "api_key": null,
+  "stream": true,
+  "temperature": 0.7,
+  "num_ctx": 4096,
+  "num_batch": 256,
+  "keep_alive": "10m",
+  "request_timeout_secs": 300,
+  "connect_timeout_secs": 5,
+  "gfx900_preset": true
 }
