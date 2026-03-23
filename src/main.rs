@@ -1,3 +1,4 @@
+use std::env;
 use std::fs;
 use std::io::{self, Write};
 use std::path::Path;
@@ -21,6 +22,7 @@ const DEFAULT_CONFIG: &str = r#"{
   "temperature": 0.0,
   "num_ctx": null,
   "num_batch": null,
+  "num_thread": null,
   "keep_alive": "10m",
   "request_timeout_secs": 300,
   "connect_timeout_secs": 5,
@@ -58,6 +60,29 @@ impl Default for Preset {
     }
 }
 
+impl Preset {
+    fn from_cli(value: &str) -> Option<Self> {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "default" => Some(Self::Default),
+            "gfx900_safe" => Some(Self::Gfx900Safe),
+            "gfx900_balanced" => Some(Self::Gfx900Balanced),
+            "gfx900_longctx" => Some(Self::Gfx900Longctx),
+            "gfx900_tinybench" => Some(Self::Gfx900Tinybench),
+            _ => None,
+        }
+    }
+
+    fn all_names() -> &'static [&'static str] {
+        &[
+            "default",
+            "gfx900_safe",
+            "gfx900_balanced",
+            "gfx900_longctx",
+            "gfx900_tinybench",
+        ]
+    }
+}
+
 #[derive(Debug, Deserialize, Clone)]
 struct Config {
     model_name: String,
@@ -73,6 +98,7 @@ struct Config {
     temperature: Option<f32>,
     num_ctx: Option<u32>,
     num_batch: Option<u32>,
+    num_thread: Option<u32>,
     keep_alive: Option<String>,
     request_timeout_secs: Option<u64>,
     connect_timeout_secs: Option<u64>,
@@ -167,6 +193,10 @@ impl Config {
         }
     }
 
+    fn effective_num_thread(&self) -> Option<u32> {
+        self.num_thread
+    }
+
     fn connect_timeout(&self) -> Duration {
         Duration::from_secs(self.connect_timeout_secs.unwrap_or(5))
     }
@@ -214,6 +244,7 @@ struct EffectiveConfig {
     max_tokens: u32,
     num_ctx: Option<u32>,
     num_batch: Option<u32>,
+    num_thread: Option<u32>,
     connect_timeout_secs: u64,
     request_timeout_secs: u64,
 }
@@ -234,6 +265,7 @@ impl EffectiveConfig {
             max_tokens: config.effective_max_tokens(),
             num_ctx: config.effective_num_ctx(),
             num_batch: config.effective_num_batch(),
+            num_thread: config.effective_num_thread(),
             connect_timeout_secs: config.connect_timeout().as_secs(),
             request_timeout_secs: config.request_timeout().as_secs(),
         }
@@ -510,6 +542,9 @@ impl App {
         }
         if let Some(num_batch) = self.effective.num_batch {
             options.insert("num_batch".to_string(), json!(num_batch));
+        }
+        if let Some(num_thread) = self.effective.num_thread {
+            options.insert("num_thread".to_string(), json!(num_thread));
         }
 
         let mut root = serde_json::Map::new();
@@ -876,6 +911,7 @@ fn print_effective_config(config: &Config, effective: &EffectiveConfig) {
     println!("effective_max_tokens: {}", effective.max_tokens);
     println!("effective_num_ctx: {:?}", effective.num_ctx);
     println!("effective_num_batch: {:?}", effective.num_batch);
+    println!("effective_num_thread: {:?}", effective.num_thread);
     println!(
         "timeout: connect={}s request={}s",
         effective.connect_timeout_secs, effective.request_timeout_secs
@@ -886,10 +922,214 @@ fn print_effective_config(config: &Config, effective: &EffectiveConfig) {
     println!("log_dir: {}", config.log_dir());
 }
 
+#[derive(Debug)]
+struct CliArgs {
+    config_path: String,
+    prompt: Option<String>,
+    repeat: u32,
+    preset: Option<Preset>,
+    model_name: Option<String>,
+    keep_alive: Option<String>,
+    clear_keep_alive: bool,
+    num_thread: Option<u32>,
+    clear_num_thread: bool,
+    stream: Option<bool>,
+    inline_stream: Option<bool>,
+    quiet: bool,
+}
+
+impl Default for CliArgs {
+    fn default() -> Self {
+        Self {
+            config_path: "config.json".to_string(),
+            prompt: None,
+            repeat: 1,
+            preset: None,
+            model_name: None,
+            keep_alive: None,
+            clear_keep_alive: false,
+            num_thread: None,
+            clear_num_thread: false,
+            stream: None,
+            inline_stream: None,
+            quiet: false,
+        }
+    }
+}
+
+fn print_usage() {
+    println!(
+        "Usage: multi_llm_client [options]\n\
+         \n\
+         Options:\n\
+         \t--config <path>             Config file path (default: config.json)\n\
+         \t--prompt <text>             Run one-shot inference (non-interactive)\n\
+         \t--repeat <n>                Repeat count for one-shot mode (default: 1)\n\
+         \t--preset <name>             Override preset (one of: {})\n\
+         \t--model <model_name>        Override model_name\n\
+         \t--keep-alive <value|none>   Override keep_alive (none clears config value)\n\
+         \t--num-thread <n|none>       Override num_thread option (none clears config value)\n\
+         \t--stream <true|false>       Override stream mode\n\
+         \t--inline-stream <true|false> Override inline_stream mode\n\
+         \t--quiet                     Suppress banner and response echo in one-shot mode\n\
+         \t-h, --help                  Show this help\n",
+        Preset::all_names().join(", ")
+    );
+}
+
+fn parse_bool_arg(value: &str) -> Result<bool, String> {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "true" | "1" | "yes" | "on" => Ok(true),
+        "false" | "0" | "no" | "off" => Ok(false),
+        _ => Err(format!("invalid bool value: {value}")),
+    }
+}
+
+fn parse_cli_args() -> Result<CliArgs, String> {
+    let mut cli = CliArgs::default();
+    let mut args = env::args().skip(1).peekable();
+
+    while let Some(arg) = args.next() {
+        match arg.as_str() {
+            "-h" | "--help" => {
+                print_usage();
+                std::process::exit(0);
+            }
+            "--config" => {
+                let value = args
+                    .next()
+                    .ok_or_else(|| "--config requires a path".to_string())?;
+                cli.config_path = value;
+            }
+            "--prompt" => {
+                let value = args
+                    .next()
+                    .ok_or_else(|| "--prompt requires a value".to_string())?;
+                cli.prompt = Some(value);
+            }
+            "--repeat" => {
+                let value = args
+                    .next()
+                    .ok_or_else(|| "--repeat requires a value".to_string())?;
+                let parsed = value
+                    .parse::<u32>()
+                    .map_err(|_| format!("invalid --repeat value: {value}"))?;
+                if parsed == 0 {
+                    return Err("--repeat must be >= 1".to_string());
+                }
+                cli.repeat = parsed;
+            }
+            "--preset" => {
+                let value = args
+                    .next()
+                    .ok_or_else(|| "--preset requires a value".to_string())?;
+                let parsed = Preset::from_cli(&value).ok_or_else(|| {
+                    format!(
+                        "invalid --preset value: {value} (expected one of: {})",
+                        Preset::all_names().join(", ")
+                    )
+                })?;
+                cli.preset = Some(parsed);
+            }
+            "--model" => {
+                let value = args
+                    .next()
+                    .ok_or_else(|| "--model requires a value".to_string())?;
+                cli.model_name = Some(value);
+            }
+            "--keep-alive" => {
+                let value = args
+                    .next()
+                    .ok_or_else(|| "--keep-alive requires a value".to_string())?;
+                if value.eq_ignore_ascii_case("none") {
+                    cli.keep_alive = None;
+                    cli.clear_keep_alive = true;
+                } else {
+                    cli.keep_alive = Some(value);
+                    cli.clear_keep_alive = false;
+                }
+            }
+            "--num-thread" => {
+                let value = args
+                    .next()
+                    .ok_or_else(|| "--num-thread requires a value".to_string())?;
+                if value.eq_ignore_ascii_case("none") {
+                    cli.num_thread = None;
+                    cli.clear_num_thread = true;
+                } else {
+                    let parsed = value
+                        .parse::<u32>()
+                        .map_err(|_| format!("invalid --num-thread value: {value}"))?;
+                    if parsed == 0 {
+                        return Err("--num-thread must be >= 1".to_string());
+                    }
+                    cli.num_thread = Some(parsed);
+                    cli.clear_num_thread = false;
+                }
+            }
+            "--stream" => {
+                let value = args
+                    .next()
+                    .ok_or_else(|| "--stream requires a value".to_string())?;
+                cli.stream = Some(parse_bool_arg(&value)?);
+            }
+            "--inline-stream" => {
+                let value = args
+                    .next()
+                    .ok_or_else(|| "--inline-stream requires a value".to_string())?;
+                cli.inline_stream = Some(parse_bool_arg(&value)?);
+            }
+            "--quiet" => {
+                cli.quiet = true;
+            }
+            _ => {
+                return Err(format!("unknown argument: {arg}"));
+            }
+        }
+    }
+
+    Ok(cli)
+}
+
+fn apply_cli_overrides(config: &mut Config, cli: &CliArgs) {
+    if let Some(preset) = &cli.preset {
+        config.preset = Some(preset.clone());
+        config.gfx900_preset = None;
+    }
+    if let Some(model_name) = &cli.model_name {
+        config.model_name = model_name.clone();
+    }
+    if let Some(stream) = cli.stream {
+        config.stream = Some(stream);
+    }
+    if let Some(inline_stream) = cli.inline_stream {
+        config.inline_stream = Some(inline_stream);
+    }
+    if cli.clear_keep_alive {
+        config.keep_alive = None;
+    } else if let Some(keep_alive) = &cli.keep_alive {
+        config.keep_alive = Some(keep_alive.clone());
+    }
+    if cli.clear_num_thread {
+        config.num_thread = None;
+    } else if let Some(num_thread) = cli.num_thread {
+        config.num_thread = Some(num_thread);
+    }
+}
+
 #[tokio::main]
 async fn main() {
-    let config_path = "config.json";
-    let config = load_config(config_path);
+    let cli = match parse_cli_args() {
+        Ok(cli) => cli,
+        Err(e) => {
+            eprintln!("{e}");
+            eprintln!("Use --help for usage.");
+            return;
+        }
+    };
+
+    let mut config = load_config(&cli.config_path);
+    apply_cli_overrides(&mut config, &cli);
 
     let app = match App::new(config.clone()) {
         Ok(app) => app,
@@ -899,7 +1139,37 @@ async fn main() {
         }
     };
 
-    print_effective_config(&config, &app.effective);
+    if !cli.quiet {
+        print_effective_config(&config, &app.effective);
+    }
+
+    if let Some(prompt) = cli.prompt.as_deref() {
+        for i in 0..cli.repeat {
+            if cli.repeat > 1 && !cli.quiet {
+                println!("[run {}/{}]", i + 1, cli.repeat);
+            }
+
+            let stream_inline = config.should_stream_inline() && !cli.quiet;
+            if stream_inline {
+                print!("AI > ");
+                let _ = io::stdout().flush();
+            }
+
+            let response = app.infer(prompt).await;
+
+            if stream_inline {
+                if response.starts_with("[error]") {
+                    println!("{response}");
+                } else {
+                    println!();
+                }
+            } else if !cli.quiet || response.starts_with("[error]") {
+                println!("AI > {response}");
+            }
+        }
+        return;
+    }
+
     println!("チャットクライアントを開始します（`/bye` または空行で終了）");
 
     loop {
