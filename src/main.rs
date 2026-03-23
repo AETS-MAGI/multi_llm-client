@@ -270,6 +270,7 @@ struct OllamaFinalMetrics {
 
 #[derive(Debug)]
 struct InferenceStats {
+    streaming_response: bool,
     started_at: Instant,
     first_token_at: Option<Instant>,
     finished_at: Option<Instant>,
@@ -278,8 +279,9 @@ struct InferenceStats {
 }
 
 impl InferenceStats {
-    fn new() -> Self {
+    fn new(streaming_response: bool) -> Self {
         Self {
+            streaming_response,
             started_at: Instant::now(),
             first_token_at: None,
             finished_at: None,
@@ -295,7 +297,13 @@ impl InferenceStats {
 
         if !chunk.token.is_empty() {
             if self.first_token_at.is_none() {
-                self.first_token_at = Some(Instant::now());
+                // In non-stream mode, a single aggregated response token often
+                // arrives only after generation completes. Measuring first token
+                // from that point would overestimate TTFT, so we only take
+                // wall-clock first-token timing from streamed responses.
+                if self.streaming_response {
+                    self.first_token_at = Some(Instant::now());
+                }
             }
             self.output_chars += chunk.token.chars().count();
         }
@@ -325,14 +333,35 @@ impl InferenceStats {
     }
 
     fn total_ms(&self) -> u128 {
-        self.finished_at
+        let wall_ms = self
+            .finished_at
             .map(|t| t.duration_since(self.started_at).as_millis())
-            .unwrap_or(0)
+            .unwrap_or(0);
+        let backend_ms = self
+            .final_metrics
+            .total_duration
+            .map(|ns| (ns as u128) / 1_000_000);
+
+        match backend_ms {
+            Some(v) if wall_ms == 0 => v,
+            Some(v) => wall_ms.max(v),
+            None => wall_ms,
+        }
     }
 
     fn ttft_ms(&self) -> Option<u128> {
-        self.first_token_at
+        if let Some(v) = self
+            .first_token_at
             .map(|t| t.duration_since(self.started_at).as_millis())
+        {
+            return Some(v);
+        }
+
+        // Fallback for non-stream mode where first-token timing cannot be
+        // observed directly from chunk arrival.
+        let prompt_ns = self.final_metrics.prompt_eval_duration?;
+        let load_ns = self.final_metrics.load_duration.unwrap_or(0);
+        Some(((prompt_ns as u128) + (load_ns as u128)) / 1_000_000)
     }
 
     fn approx_tok_per_sec(&self) -> Option<f64> {
@@ -500,6 +529,7 @@ impl App {
         let endpoint = self.config.endpoint_for_ollama();
         let request_body = self.build_ollama_request(prompt);
         let mut req = self.client.post(&endpoint).json(&request_body);
+        let mut stats = InferenceStats::new(self.effective.stream);
 
         if let Some(api_key) = &self.config.api_key {
             req = req.bearer_auth(api_key);
@@ -509,7 +539,8 @@ impl App {
             Ok(response) => response,
             Err(e) => {
                 let err = format!("[error] Ollama推論エラー: {e}");
-                let _ = self.write_log(prompt, "", None, Some(err.clone()));
+                stats.finish();
+                let _ = self.write_log(prompt, "", Some(&stats), Some(err.clone()));
                 return err;
             }
         };
@@ -521,11 +552,10 @@ impl App {
                 .await
                 .unwrap_or_else(|_| "<body read failed>".to_string());
             let err = format!("[error] Ollama HTTPエラー: status={} body={}", status, body);
-            let _ = self.write_log(prompt, "", None, Some(err.clone()));
+            stats.finish();
+            let _ = self.write_log(prompt, "", Some(&stats), Some(err.clone()));
             return err;
         }
-
-        let mut stats = InferenceStats::new();
 
         let result = if self.effective.stream {
             self.consume_ollama_stream(res, self.config.should_stream_inline(), &mut stats)
