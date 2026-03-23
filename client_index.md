@@ -30,6 +30,8 @@
   - 推論結果と統計の永続ログ
 - `README.MD`, `README.ja.md`
   - 利用手順
+- `Code_Explanation.MD`
+  - 旧解説ドキュメント（現行コードとの差分確認用）
 
 ## 3. 構造体と関数の関係
 
@@ -96,6 +98,7 @@ flowchart TD
 - `build-gfx900/lib/ollama` を優先探索
   - 根拠: `ollama-src/ml/path.go:41-49`
 - ROCm デバイスは init validation 対象（rocBLAS クラッシュ回避の防御）
+  - 補足: 実装上は CUDA も同様に対象
   - 根拠: `ollama-src/ml/device.go:542-545`
 
 ## 5.3 rocBLAS/Tensile との関係（間接依存の実体）
@@ -124,9 +127,10 @@ flowchart TD
 ## 6. 計測（TTFT/total/tok/s）設計
 
 - `tok/s`
-  - `eval_count / eval_duration(ns)` から計算
+  - `eval_count / eval_duration(s)` から計算（コードでは ns を秒へ変換してから除算）
 - `total_ms`
-  - 壁時計を基本に、必要時は `total_duration(ns)` を補助利用
+  - 壁時計と backend `total_duration` の双方がある場合は **大きい方** を採用（計測漏れ防止）
+  - 壁時計が 0 の場合は backend 値、backend が無い場合は壁時計値を使う
 - `ttft_ms`
   - stream時: first token 到着の壁時計
   - non-stream時: `load_duration + prompt_eval_duration` から近似
@@ -142,7 +146,7 @@ flowchart TD
 修正:
 - `InferenceStats` 開始を HTTP 送信前へ移動
 - non-stream の TTFT を backend metrics から近似するフォールバック追加
-- `total_ms` に backend `total_duration` のフォールバック/補強を追加
+- `total_ms` に wall-clock と backend `total_duration` の **max採用ロジック** を追加
 
 実装箇所:
 - `multi_llm-client/src/main.rs`
@@ -155,6 +159,8 @@ flowchart TD
 2. preset スイープ（`gfx900_safe/balanced/longctx/tinybench`）
 3. fallback_confirmed 証跡の固定（`ollama-src` 実機ログ）
 4. 必要なら Rust クライアント本体への tool-calling 拡張
+
+※ 上記4 preset は `src/main.rs` の `Preset` enum と `effective_*` 解決ロジックに実装済み。
 
 ## 9. 2026-03-24 preset sweep 結果（tinyllama）
 
