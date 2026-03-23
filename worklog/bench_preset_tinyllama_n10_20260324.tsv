@@ -1,0 +1,11 @@
+ts_unix	mode	model	preset_effective	requested_preset	num_thread	keep_alive	repeat_idx	ttft_ms	total_ms	tok_s	response_chars	rc	error
+1774283908	preset-sweep	tinyllama:latest	gfx900_safe	gfx900_safe	none	10m	1	1595	2281	201.57365084668885	463	0	 
+1774283909	preset-sweep	tinyllama:latest	gfx900_safe	gfx900_safe	none	10m	2	139	829	205.03698699851978	469	0	 
+1774283910	preset-sweep	tinyllama:latest	gfx900_safe	gfx900_safe	none	10m	3	95	744	218.47458840560995	469	0	 
+1774283911	preset-sweep	tinyllama:latest	gfx900_safe	gfx900_safe	none	10m	4	124	770	218.15659568473131	469	0	 
+1774283912	preset-sweep	tinyllama:latest	gfx900_safe	gfx900_safe	none	10m	5	125	766	218.78870535648304	469	0	 
+1774283912	preset-sweep	tinyllama:latest	gfx900_safe	gfx900_safe	none	10m	6	107	749	217.89980247672304	469	0	 
+1774283913	preset-sweep	tinyllama:latest	gfx900_safe	gfx900_safe	none	10m	7	89	742	216.4750421137819	469	0	 
+1774283914	preset-sweep	tinyllama:latest	gfx900_safe	gfx900_safe	none	10m	8	86	725	217.4363285870482	469	0	 
+1774283915	preset-sweep	tinyllama:latest	gfx900_safe	gfx900_safe	none	10m	9	106	754	216.21674945346996	469	0	 
+1774283916	preset-sweep	tinyllama:latest	gfx900_safe	gfx900_safe	none	10m	10	141	795	214.3426001180428	469	0	 
