@@ -1,0 +1,20 @@
+{
+  "model_name": "tinyllama:latest",
+  "endpoint": "http://127.0.0.1:11434/api/generate",
+  "use_local_model": true,
+  "local_framework": "ollama",
+  "openai_compatible": false,
+  "max_tokens": 128,
+  "api_key": null,
+  "stream": true,
+  "inline_stream": true,
+  "temperature": 0.0,
+  "num_ctx": 4096,
+  "num_batch": 512,
+  "keep_alive": "10m",
+  "request_timeout_secs": 300,
+  "connect_timeout_secs": 5,
+  "preset": "default",
+  "python_command": "python3",
+  "log_dir": "logs"
+}
