@@ -124,6 +124,57 @@ flowchart TD
 - `multi_llm-client` は starter-kit 配下の `ollama serve` を endpoint として利用可能
   - 根拠: `ollama-gfx900-starter-kit/README.md:25-32`, `:99`
 
+## 5.5 相関図（Mermaid）
+
+### 5.5.1 実行時依存の全体像
+
+```mermaid
+flowchart LR
+  subgraph Client["Client Layer"]
+    A[multi_llm-client<br/>src/main.rs]
+    CFG[config.json<br/>preset/effective_*]
+    LOG[logs/infer-*.jsonl]
+  end
+
+  subgraph Serving["Serving Layer"]
+    OAPI[ollama /api/generate]
+    ORT[routes.go + sched.go]
+    OPATH[ml/path.go<br/>build-gfx900優先]
+    OLIB[libggml-hip.so]
+  end
+
+  subgraph ROCm["ROCm Math Layer"]
+    RB[rocBLAS<br/>ROCm-repos_AETS/rocBLAS]
+    TS[Tensile<br/>ROCm-repos_AETS/Tensile]
+    GPU[gfx900 / MI25]
+  end
+
+  CFG --> A
+  A -->|HTTP POST| OAPI
+  OAPI --> ORT
+  ORT --> OPATH
+  OPATH --> OLIB
+  OLIB --> RB
+  RB --> TS
+  TS --> GPU
+  A --> LOG
+```
+
+### 5.5.2 責務境界（どこで何を制御するか）
+
+```mermaid
+flowchart TB
+  C1[multi_llm-client<br/>preset, request payload, metrics]
+  C2[ollama-src<br/>runner/scheduler/backend load]
+  C3[rocBLAS/Tensile<br/>kernel選択・実行]
+  C4[実機ログ<br/>journal, rocm-smi, path_check_logs]
+
+  C1 -->|制御可能| C2
+  C2 -->|間接依存| C3
+  C3 -->|結果を反映| C4
+  C4 -->|検証フィードバック| C1
+```
+
 ## 6. 計測（TTFT/total/tok/s）設計
 
 - `tok/s`
