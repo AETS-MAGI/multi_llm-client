@@ -1,6 +1,7 @@
 # multi_llm-client Code Index (MI25/gfx900)
 
-最終更新: 2026-03-24
+最終更新: 2026-03-24. 
+
 対象: `multi_llm-client`（Rust CLI）
 
 ## 1. 目的と責務
