@@ -1,0 +1,21 @@
+ts_unix	mode	model	preset_effective	requested_preset	num_thread	keep_alive	repeat_idx	ttft_ms	total_ms	tok_s	response_chars	rc	error
+1774283408	keepalive-sweep	qwen2.5:7b	gfx900_safe	gfx900_safe	none	0s	1	9139	10047	36.3809225936389	140	0	 
+1774283412	keepalive-sweep	qwen2.5:7b	gfx900_safe	gfx900_safe	none	0s	2	3407	4109	48.21443171791662	140	0	 
+1774283416	keepalive-sweep	qwen2.5:7b	gfx900_safe	gfx900_safe	none	0s	3	3444	4183	45.40397739386818	140	0	 
+1774283420	keepalive-sweep	qwen2.5:7b	gfx900_safe	gfx900_safe	none	0s	4	3435	4180	44.846624856915724	140	0	 
+1774283424	keepalive-sweep	qwen2.5:7b	gfx900_safe	gfx900_safe	none	0s	5	3398	4093	48.29826543589743	140	0	 
+1774283429	keepalive-sweep	qwen2.5:7b	gfx900_safe	gfx900_safe	none	0s	6	3434	4155	46.627504412220866	140	0	 
+1774283433	keepalive-sweep	qwen2.5:7b	gfx900_safe	gfx900_safe	none	0s	7	3419	4101	49.58326357794536	140	0	 
+1774283437	keepalive-sweep	qwen2.5:7b	gfx900_safe	gfx900_safe	none	0s	8	3378	4124	44.27030082156382	140	0	 
+1774283441	keepalive-sweep	qwen2.5:7b	gfx900_safe	gfx900_safe	none	0s	9	3445	4181	45.34476653052118	140	0	 
+1774283445	keepalive-sweep	qwen2.5:7b	gfx900_safe	gfx900_safe	none	0s	10	3365	4044	49.63422529196229	140	0	 
+1774283449	keepalive-sweep	qwen2.5:7b	gfx900_safe	gfx900_safe	none	10m	1	3454	4157	48.13820903429987	140	0	 
+1774283450	keepalive-sweep	qwen2.5:7b	gfx900_safe	gfx900_safe	none	10m	2	285	955	49.70958780601011	140	0	 
+1774283452	keepalive-sweep	qwen2.5:7b	gfx900_safe	gfx900_safe	none	10m	3	289	973	49.43257353962856	140	0	 
+1774283453	keepalive-sweep	qwen2.5:7b	gfx900_safe	gfx900_safe	none	10m	4	272	959	49.52182150094173	140	0	 
+1774283454	keepalive-sweep	qwen2.5:7b	gfx900_safe	gfx900_safe	none	10m	5	337	1025	49.56677949051507	140	0	 
+1774283455	keepalive-sweep	qwen2.5:7b	gfx900_safe	gfx900_safe	none	10m	6	279	955	49.52029475879215	140	0	 
+1774283456	keepalive-sweep	qwen2.5:7b	gfx900_safe	gfx900_safe	none	10m	7	301	991	49.36311933791446	140	0	 
+1774283457	keepalive-sweep	qwen2.5:7b	gfx900_safe	gfx900_safe	none	10m	8	269	953	49.35109941985759	140	0	 
+1774283458	keepalive-sweep	qwen2.5:7b	gfx900_safe	gfx900_safe	none	10m	9	257	936	49.482518746501704	140	0	 
+1774283459	keepalive-sweep	qwen2.5:7b	gfx900_safe	gfx900_safe	none	10m	10	270	954	49.32157329249169	140	0	 

@@ -1,0 +1,21 @@
+ts_unix	mode	model	preset_effective	requested_preset	num_thread	keep_alive	repeat_idx	ttft_ms	total_ms	tok_s	response_chars	rc	error
+1774283360	keepalive-sweep	tinyllama:latest	gfx900_safe	gfx900_safe	none	0s	1	1495	2139	215.48011938500935	463	0	 
+1774283362	keepalive-sweep	tinyllama:latest	gfx900_safe	gfx900_safe	none	0s	2	1401	2096	201.78394696743314	463	0	 
+1774283364	keepalive-sweep	tinyllama:latest	gfx900_safe	gfx900_safe	none	0s	3	1062	1768	196.8291161536776	463	0	 
+1774283366	keepalive-sweep	tinyllama:latest	gfx900_safe	gfx900_safe	none	0s	4	1426	2098	207.08619849762198	463	0	 
+1774283368	keepalive-sweep	tinyllama:latest	gfx900_safe	gfx900_safe	none	0s	5	1125	1806	202.22074525245407	463	0	 
+1774283370	keepalive-sweep	tinyllama:latest	gfx900_safe	gfx900_safe	none	0s	6	1343	1990	219.6674135478858	463	0	 
+1774283372	keepalive-sweep	tinyllama:latest	gfx900_safe	gfx900_safe	none	0s	7	1330	2022	201.19277450730365	463	0	 
+1774283374	keepalive-sweep	tinyllama:latest	gfx900_safe	gfx900_safe	none	0s	8	1115	1798	202.3378424142362	463	0	 
+1774283376	keepalive-sweep	tinyllama:latest	gfx900_safe	gfx900_safe	none	0s	9	1337	2062	192.36276568658653	463	0	 
+1774283378	keepalive-sweep	tinyllama:latest	gfx900_safe	gfx900_safe	none	0s	10	1070	1789	191.80398064736795	463	0	 
+1774283380	keepalive-sweep	tinyllama:latest	gfx900_safe	gfx900_safe	none	10m	1	1369	2030	210.73316043786062	463	0	 
+1774283380	keepalive-sweep	tinyllama:latest	gfx900_safe	gfx900_safe	none	10m	2	86	750	213.97003147440657	469	0	 
+1774283381	keepalive-sweep	tinyllama:latest	gfx900_safe	gfx900_safe	none	10m	3	178	834	214.64134948920213	469	0	 
+1774283382	keepalive-sweep	tinyllama:latest	gfx900_safe	gfx900_safe	none	10m	4	107	763	214.31577075700855	469	0	 
+1774283383	keepalive-sweep	tinyllama:latest	gfx900_safe	gfx900_safe	none	10m	5	96	767	212.56658122968105	469	0	 
+1774283384	keepalive-sweep	tinyllama:latest	gfx900_safe	gfx900_safe	none	10m	6	121	795	209.04110418672977	469	0	 
+1774283385	keepalive-sweep	tinyllama:latest	gfx900_safe	gfx900_safe	none	10m	7	165	833	213.55539748971034	469	0	 
+1774283386	keepalive-sweep	tinyllama:latest	gfx900_safe	gfx900_safe	none	10m	8	85	756	213.16993396027087	469	0	 
+1774283387	keepalive-sweep	tinyllama:latest	gfx900_safe	gfx900_safe	none	10m	9	119	789	212.50570048616802	469	0	 
+1774283387	keepalive-sweep	tinyllama:latest	gfx900_safe	gfx900_safe	none	10m	10	62	720	212.0152244356146	469	0	 
