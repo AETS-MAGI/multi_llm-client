@@ -37,6 +37,11 @@ fi
 MODE="$1"
 shift
 
+if [[ "$MODE" == "-h" || "$MODE" == "--help" ]]; then
+  usage
+  exit 0
+fi
+
 MODEL="${MODEL:-tinyllama:latest}"
 PROMPT="${PROMPT:-short test}"
 REPEAT="${REPEAT:-3}"
@@ -259,6 +264,16 @@ print_summary() {
 }
 
 CLIENT_BIN="$(resolve_client_bin)"
+case "$MODE" in
+  preset-sweep|thread-sweep|keepalive-sweep|all)
+    ;;
+  *)
+    echo "[error] unknown mode: $MODE" >&2
+    usage
+    exit 1
+    ;;
+esac
+
 write_header
 
 echo "[info] mode=$MODE model=$MODEL repeat=$REPEAT prompt_chars=${#PROMPT}"
@@ -283,11 +298,6 @@ case "$MODE" in
     run_thread_sweep
     run_keepalive_sweep
     action_done=1
-    ;;
-  *)
-    echo "[error] unknown mode: $MODE" >&2
-    usage
-    exit 1
     ;;
 esac
 
