@@ -156,3 +156,24 @@ flowchart TD
 3. fallback_confirmed 証跡の固定（`ollama-src` 実機ログ）
 4. 必要なら Rust クライアント本体への tool-calling 拡張
 
+## 9. 2026-03-24 preset sweep 結果（tinyllama）
+
+条件:
+- 同一プロンプト
+- 各 preset 3 回（1回目は preset 切替直後の cold start を含む）
+- 指標: `ttft_ms`, `total_ms`, `approx_tok_per_sec`
+
+> 注意: `total_ms` は `max_tokens` の違いの影響を受ける。
+> 速度比較の主指標は `tok/s`、遅延比較は `steady2` の `ttft_ms` を優先。
+
+| preset | ttft_ms (all3) | total_ms (all3) | tok/s (all3) | ttft_ms (steady2) | total_ms (steady2) | tok/s (steady2) |
+|---|---:|---:|---:|---:|---:|---:|
+| `gfx900_safe` | 122.0 | 764.0 | 219.70 | 112.0 | 745.5 | 221.47 |
+| `gfx900_balanced` | 595.3 | 1546.7 | 221.14 | 137.5 | 1079.5 | 223.73 |
+| `gfx900_longctx` | 698.7 | 1346.7 | 217.42 | 141.0 | 770.0 | 224.77 |
+| `gfx900_tinybench` | 620.0 | 803.7 | 197.32 | 118.5 | 281.5 | 219.71 |
+
+暫定結論:
+- **安定運用の既定値**: `gfx900_safe`（TTFT 安定）
+- **吞吐優先**: `gfx900_balanced`（`tok/s` 高、`longctx` より VRAM 保守的）
+- `gfx900_longctx` は長文脈用途で有効だが、通常運用の既定にはやや重い
