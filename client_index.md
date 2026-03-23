@@ -29,6 +29,10 @@
   - 実行設定（preset/timeout/stream など）
 - `logs/infer-YYYY-MM-DD.jsonl`
   - 推論結果と統計の永続ログ
+- `scripts/phase3_bench.sh`
+  - preset/thread/keep_alive の反復測定を TSV へ出力
+- `worklog/`
+  - 変更履歴と計測メモ
 - `README.MD`, `README.ja.md`
   - 利用手順
 - `Code_Explanation.MD`
@@ -41,6 +45,7 @@
 - `Config`
   - 生設定を保持
   - `effective_max_tokens`, `effective_num_ctx`, `effective_num_batch` で preset 解決
+  - `num_thread` を持ち、Ollama `options.num_thread` を明示上書きできる
 - `EffectiveConfig`
   - 推論時に使う確定値
   - `EffectiveConfig::from_config` で `Config` から派生
@@ -204,6 +209,10 @@ flowchart TB
 - `multi_llm-client/src/main.rs`
   - `InferenceStats`（`streaming_response` 追加、`ttft_ms`/`total_ms` 改良）
   - `ollama_inference`（計測開始タイミングを `req.send` 前へ移動）
+  - one-shot 実行用 CLI (`--prompt`, `--repeat`, `--preset`, `--num-thread`, `--keep-alive` など)
+  - `num_thread` の設定追加と `options.num_thread` 反映
+- `multi_llm-client/scripts/phase3_bench.sh`
+  - Phase3 向け sweep（preset/thread/keep_alive）をスクリプト化
 
 ## 8. 次にやる最適化（この地図に沿った順）
 

@@ -66,6 +66,7 @@ cargo run
   "temperature": 0.0,
   "num_ctx": null,
   "num_batch": null,
+  "num_thread": null,
   "keep_alive": "10m",
   "request_timeout_secs": 300,
   "connect_timeout_secs": 5,
@@ -91,6 +92,7 @@ cargo run
 | `temperature` | number or null | `null` | サンプリング温度 |
 | `num_ctx` | number or null | preset依存 | コンテキスト長 |
 | `num_batch` | number or null | preset依存 | バッチサイズ |
+| `num_thread` | number or null | `null` | Ollama `options.num_thread` 上書き |
 | `keep_alive` | string or null | `10m` | Ollama keep-alive |
 | `request_timeout_secs` | number | `300` | リクエストタイムアウト |
 | `connect_timeout_secs` | number | `5` | 接続タイムアウト |
@@ -125,6 +127,45 @@ cargo run
 - パス: `log_dir/infer-YYYY-MM-DD.jsonl`
 - 1推論につき1行
 - prompt/response長、時間、effective設定、Ollama最終メトリクスを含む
+
+## 非対話モード
+
+スクリプト実行向けに one-shot モードを使えます。
+
+```bash
+./target/debug/multi_llm_client \
+  --prompt "short test" \
+  --preset gfx900_safe \
+  --stream false \
+  --inline-stream false \
+  --num-thread 4 \
+  --repeat 3
+```
+
+主な CLI 上書き:
+
+- `--config <path>`
+- `--prompt <text>`
+- `--repeat <n>`
+- `--preset <default|gfx900_safe|gfx900_balanced|gfx900_longctx|gfx900_tinybench>`
+- `--model <model_name>`
+- `--keep-alive <value|none>`
+- `--num-thread <n|none>`
+- `--stream <true|false>`
+- `--inline-stream <true|false>`
+- `--quiet`
+
+## Phase3 自動ベンチスクリプト
+
+`scripts/phase3_bench.sh` で TSV 出力付きの反復測定を実行できます。
+
+```bash
+scripts/phase3_bench.sh preset-sweep --repeat 3 --prompt "short test"
+scripts/phase3_bench.sh thread-sweep --repeat 3 --preset gfx900_safe --threads 2,4,6
+scripts/phase3_bench.sh keepalive-sweep --repeat 3 --keep-alive-values 0s,10m
+```
+
+既定の出力先: `worklog/bench_<mode>_YYYYmmdd_HHMMSS.tsv`
 
 ## gfx900 ベンチ推奨手順
 

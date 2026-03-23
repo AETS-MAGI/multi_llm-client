@@ -1,0 +1,2 @@
+ts_unix	mode	model	preset_effective	requested_preset	num_thread	keep_alive	repeat_idx	ttft_ms	total_ms	tok_s	response_chars	rc	error
+1774282938	thread-sweep	tinyllama:latest	gfx900_safe	gfx900_safe	2	10m	1	1524	2175	213.4699277591414	463	0	 
