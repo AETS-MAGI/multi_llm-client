@@ -68,6 +68,7 @@ cargo run
   "temperature": 0.0,
   "num_ctx": null,
   "num_batch": null,
+  "num_thread": null,
   "keep_alive": "10m",
   "request_timeout_secs": 300,
   "connect_timeout_secs": 5,
@@ -93,6 +94,7 @@ cargo run
 | `temperature` | number or null | `null` | Sampling temperature |
 | `num_ctx` | number or null | preset-based | Context size override |
 | `num_batch` | number or null | preset-based | Batch size override |
+| `num_thread` | number or null | `null` | `options.num_thread` override for Ollama |
 | `keep_alive` | string or null | `10m` | Ollama keep-alive |
 | `request_timeout_secs` | number | `300` | Request timeout |
 | `connect_timeout_secs` | number | `5` | Connect timeout |
@@ -128,6 +130,45 @@ Logs are stored as JSONL:
 - Path: `log_dir/infer-YYYY-MM-DD.jsonl`
 - One record per inference
 - Includes prompt/response lengths, timing, effective config, and Ollama final metrics
+
+## Non-Interactive Mode
+
+For scripted benchmarks, use one-shot mode:
+
+```bash
+./target/debug/multi_llm_client \
+  --prompt "short test" \
+  --preset gfx900_safe \
+  --stream false \
+  --inline-stream false \
+  --num-thread 4 \
+  --repeat 3
+```
+
+Supported CLI overrides:
+
+- `--config <path>`
+- `--prompt <text>`
+- `--repeat <n>`
+- `--preset <default|gfx900_safe|gfx900_balanced|gfx900_longctx|gfx900_tinybench>`
+- `--model <model_name>`
+- `--keep-alive <value|none>`
+- `--num-thread <n|none>`
+- `--stream <true|false>`
+- `--inline-stream <true|false>`
+- `--quiet`
+
+## Phase3 Sweep Script
+
+Use `scripts/phase3_bench.sh` to automate repeatable TSV output:
+
+```bash
+scripts/phase3_bench.sh preset-sweep --repeat 3 --prompt "short test"
+scripts/phase3_bench.sh thread-sweep --repeat 3 --preset gfx900_safe --threads 2,4,6
+scripts/phase3_bench.sh keepalive-sweep --repeat 3 --keep-alive-values 0s,10m
+```
+
+Output TSV (default): `worklog/bench_<mode>_YYYYmmdd_HHMMSS.tsv`
 
 ## Recommended gfx900 Benchmark Flow
 
