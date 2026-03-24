@@ -168,6 +168,9 @@ cargo run
 - `--predict-values <csv>`
 - `--bench-report <path>`
 - `--report-out <path>`
+- `--bench-compare <path>`
+- `--compare-side <path>`
+- `--compare-out <path>`
 - `--quiet`
 
 ## Rust内蔵ベンチモード
@@ -180,6 +183,7 @@ cargo run -- --bench thread-sweep --preset gfx900_safe --threads 2,4,6 --repeat 
 cargo run -- --bench keepalive-sweep --preset gfx900_anchor_baseline --keep-alive-values 10s,30s,5m --repeat 3
 cargo run -- --bench predict-sweep --preset gfx900_anchor_baseline --predict-values 64,128,256,512,1024 --repeat 3
 cargo run -- --bench-report worklog/bench_predict_phaseagg_smoke.tsv
+cargo run -- --bench-compare worklog/bench_predict_phaseagg_smoke_phase_summary.tsv --compare-side worklog/bench_predict_side_smoke_phase_summary.tsv
 ```
 
 TSV 列:
@@ -202,6 +206,10 @@ TSV 列:
 - mode集約レポート（後処理コマンド）:
   - `--bench-report <input.tsv>` で `<input>_mode_summary.tsv` を生成
   - 出力先は `--report-out <path>` で上書き可能
+- baseline/side 自動比較（phase summary 同士）:
+  - `--bench-compare <baseline_phase_summary.tsv> --compare-side <side_phase_summary.tsv>`
+  - 出力先は `--compare-out <path>` で上書き可能
+  - `ttft/total/tok_s`、decode proxy、prefill/decode ratio の差分・比率を出力
 
 自動サマリ:
 

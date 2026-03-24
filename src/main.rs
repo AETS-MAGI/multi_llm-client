@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::env;
 use std::fs;
 use std::io::{self, Write};
@@ -1013,6 +1013,9 @@ struct CliArgs {
     bench_predict_values_csv: Option<String>,
     bench_report_input: Option<String>,
     bench_report_out: Option<String>,
+    bench_compare_baseline: Option<String>,
+    bench_compare_side: Option<String>,
+    bench_compare_out: Option<String>,
     quiet: bool,
 }
 
@@ -1037,6 +1040,9 @@ impl Default for CliArgs {
             bench_predict_values_csv: None,
             bench_report_input: None,
             bench_report_out: None,
+            bench_compare_baseline: None,
+            bench_compare_side: None,
+            bench_compare_out: None,
             quiet: false,
         }
     }
@@ -1063,6 +1069,9 @@ fn print_usage() {
          \t--predict-values <csv>      max_tokens set for --bench predict-sweep (default: 64,128,256,512,1024)\n\
          \t--bench-report <path>       Build grouped mode summary TSV from an existing bench TSV\n\
          \t--report-out <path>         Output path for --bench-report (default: <input>_mode_summary.tsv)\n\
+         \t--bench-compare <path>      Compare two phase summary TSVs (baseline file path)\n\
+         \t--compare-side <path>       Side phase summary TSV for --bench-compare\n\
+         \t--compare-out <path>        Output path for --bench-compare (default: <baseline>_vs_<side>.tsv)\n\
          \t--quiet                     Suppress banner and response echo in one-shot mode\n\
          \t-h, --help                  Show this help\n",
         Preset::all_names().join(", "),
@@ -1254,6 +1263,24 @@ fn parse_cli_args() -> Result<CliArgs, String> {
                     .ok_or_else(|| "--report-out requires a value".to_string())?;
                 cli.bench_report_out = Some(value);
             }
+            "--bench-compare" => {
+                let value = args
+                    .next()
+                    .ok_or_else(|| "--bench-compare requires a value".to_string())?;
+                cli.bench_compare_baseline = Some(value);
+            }
+            "--compare-side" => {
+                let value = args
+                    .next()
+                    .ok_or_else(|| "--compare-side requires a value".to_string())?;
+                cli.bench_compare_side = Some(value);
+            }
+            "--compare-out" => {
+                let value = args
+                    .next()
+                    .ok_or_else(|| "--compare-out requires a value".to_string())?;
+                cli.bench_compare_out = Some(value);
+            }
             "--quiet" => {
                 cli.quiet = true;
             }
@@ -1412,6 +1439,10 @@ struct BenchGroupStats {
 
 fn parse_f64_col(cols: &[&str], idx: usize) -> Option<f64> {
     cols.get(idx).and_then(|v| v.parse::<f64>().ok())
+}
+
+fn parse_u64_col(cols: &[&str], idx: usize) -> Option<u64> {
+    cols.get(idx).and_then(|v| v.parse::<u64>().ok())
 }
 
 fn write_bench_phase_summary(out_path: &str) -> Result<String, String> {
@@ -1681,6 +1712,292 @@ fn write_bench_mode_summary(input_path: &str, report_out: Option<&str>) -> Resul
     }
 
     Ok(out_path)
+}
+
+#[derive(Default, Clone)]
+struct WeightedMetric {
+    sum: f64,
+    weight: u64,
+}
+
+impl WeightedMetric {
+    fn add(&mut self, value: Option<f64>, row_weight: u64) {
+        if let Some(v) = value {
+            self.sum += v * row_weight as f64;
+            self.weight += row_weight;
+        }
+    }
+
+    fn avg(&self) -> Option<f64> {
+        if self.weight == 0 {
+            None
+        } else {
+            Some(self.sum / self.weight as f64)
+        }
+    }
+}
+
+#[derive(Default, Clone)]
+struct PhaseSummaryAgg {
+    preset_effective_set: BTreeSet<String>,
+    requested_preset_set: BTreeSet<String>,
+    rows: u64,
+    ok_rows: u64,
+    ttft: WeightedMetric,
+    total: WeightedMetric,
+    tok_s: WeightedMetric,
+    prompt_eval_ms: WeightedMetric,
+    eval_ms: WeightedMetric,
+    decode_tok_s: WeightedMetric,
+    prefill_decode_ratio: WeightedMetric,
+}
+
+type CompareKey = (String, String, String, String, String);
+
+fn parse_phase_summary_agg(path: &str) -> Result<BTreeMap<CompareKey, PhaseSummaryAgg>, String> {
+    let content = fs::read_to_string(path)
+        .map_err(|e| format!("phase summary 読み取り失敗 ({path}): {e}"))?;
+
+    let mut map: BTreeMap<CompareKey, PhaseSummaryAgg> = BTreeMap::new();
+
+    for line in content.lines().skip(1) {
+        if line.trim().is_empty() {
+            continue;
+        }
+        let cols: Vec<&str> = line.split('\t').collect();
+        if cols.len() < 16 {
+            continue;
+        }
+
+        let key: CompareKey = (
+            cols[0].to_string(), // mode
+            cols[3].to_string(), // num_thread
+            cols[4].to_string(), // keep_alive
+            cols[5].to_string(), // max_tokens
+            cols[6].to_string(), // phase_signature
+        );
+        let entry = map.entry(key).or_default();
+        entry.preset_effective_set.insert(cols[1].to_string());
+        entry.requested_preset_set.insert(cols[2].to_string());
+
+        let row_weight = parse_u64_col(&cols, 7).unwrap_or(1);
+        entry.rows += row_weight;
+        entry.ok_rows += parse_u64_col(&cols, 8).unwrap_or(0);
+
+        entry.ttft.add(parse_f64_col(&cols, 9), row_weight);
+        entry.total.add(parse_f64_col(&cols, 10), row_weight);
+        entry.tok_s.add(parse_f64_col(&cols, 11), row_weight);
+        entry
+            .prompt_eval_ms
+            .add(parse_f64_col(&cols, 12), row_weight);
+        entry.eval_ms.add(parse_f64_col(&cols, 13), row_weight);
+        entry.decode_tok_s.add(parse_f64_col(&cols, 14), row_weight);
+        entry
+            .prefill_decode_ratio
+            .add(parse_f64_col(&cols, 15), row_weight);
+    }
+
+    Ok(map)
+}
+
+fn fmt_opt4(v: Option<f64>) -> String {
+    v.map(|x| format!("{x:.4}")).unwrap_or_default()
+}
+
+fn delta_opt(side: Option<f64>, base: Option<f64>) -> Option<f64> {
+    Some(side? - base?)
+}
+
+fn ratio_opt(side: Option<f64>, base: Option<f64>) -> Option<f64> {
+    let b = base?;
+    if b == 0.0 {
+        None
+    } else {
+        Some(side? / b)
+    }
+}
+
+fn set_to_csv(set: &BTreeSet<String>) -> String {
+    if set.is_empty() {
+        String::new()
+    } else {
+        set.iter().cloned().collect::<Vec<_>>().join(",")
+    }
+}
+
+fn write_bench_compare_summary(
+    baseline_path: &str,
+    side_path: &str,
+    out_path: Option<&str>,
+) -> Result<String, String> {
+    let baseline = parse_phase_summary_agg(baseline_path)?;
+    let side = parse_phase_summary_agg(side_path)?;
+
+    let final_out = if let Some(v) = out_path {
+        v.to_string()
+    } else {
+        let b = Path::new(baseline_path);
+        let s = Path::new(side_path);
+        let parent = b.parent().unwrap_or_else(|| Path::new("."));
+        let b_stem = b
+            .file_stem()
+            .and_then(|v| v.to_str())
+            .ok_or_else(|| format!("baseline名解析失敗: {baseline_path}"))?;
+        let s_stem = s
+            .file_stem()
+            .and_then(|v| v.to_str())
+            .ok_or_else(|| format!("side名解析失敗: {side_path}"))?;
+        parent
+            .join(format!("{b_stem}_vs_{s_stem}.tsv"))
+            .display()
+            .to_string()
+    };
+
+    let out_parent = Path::new(&final_out)
+        .parent()
+        .unwrap_or_else(|| Path::new("."));
+    fs::create_dir_all(out_parent).map_err(|e| {
+        format!(
+            "bench compare出力先ディレクトリ作成失敗 ({:?}): {e}",
+            out_parent
+        )
+    })?;
+
+    let mut file = fs::File::create(&final_out)
+        .map_err(|e| format!("bench compare出力失敗 ({final_out}): {e}"))?;
+
+    writeln!(
+        file,
+        "mode\tnum_thread\tkeep_alive\tmax_tokens\tphase_signature\tstatus\tbaseline_preset_effective\tside_preset_effective\tbaseline_rows\tside_rows\tbaseline_ok_rows\tside_ok_rows\tbaseline_avg_ttft_ms\tside_avg_ttft_ms\tdelta_ttft_ms\tratio_ttft\tbaseline_avg_total_ms\tside_avg_total_ms\tdelta_total_ms\tratio_total\tbaseline_avg_tok_s\tside_avg_tok_s\tdelta_tok_s\tratio_tok_s\tbaseline_avg_decode_tok_s\tside_avg_decode_tok_s\tdelta_decode_tok_s\tratio_decode_tok_s\tbaseline_avg_prefill_decode_ratio\tside_avg_prefill_decode_ratio\tdelta_prefill_decode_ratio"
+    )
+    .map_err(|e| format!("bench compareヘッダ書き込み失敗: {e}"))?;
+
+    let mut keys: BTreeSet<CompareKey> = BTreeSet::new();
+    keys.extend(baseline.keys().cloned());
+    keys.extend(side.keys().cloned());
+
+    for key in keys {
+        let (mode, num_thread, keep_alive, max_tokens, phase_sig) = (
+            key.0.clone(),
+            key.1.clone(),
+            key.2.clone(),
+            key.3.clone(),
+            key.4.clone(),
+        );
+
+        let base = baseline.get(&key);
+        let side_v = side.get(&key);
+
+        let status = match (base, side_v) {
+            (Some(_), Some(_)) => "matched",
+            (Some(_), None) => "baseline_only",
+            (None, Some(_)) => "side_only",
+            _ => "unavailable",
+        };
+
+        let (
+            base_rows,
+            base_ok,
+            base_preset,
+            base_ttft,
+            base_total,
+            base_tok,
+            base_decode,
+            base_ratio,
+        ) = if let Some(v) = base {
+            (
+                v.rows.to_string(),
+                v.ok_rows.to_string(),
+                set_to_csv(&v.preset_effective_set),
+                v.ttft.avg(),
+                v.total.avg(),
+                v.tok_s.avg(),
+                v.decode_tok_s.avg(),
+                v.prefill_decode_ratio.avg(),
+            )
+        } else {
+            (
+                String::new(),
+                String::new(),
+                String::new(),
+                None,
+                None,
+                None,
+                None,
+                None,
+            )
+        };
+
+        let (
+            side_rows,
+            side_ok,
+            side_preset,
+            side_ttft,
+            side_total,
+            side_tok,
+            side_decode,
+            side_ratio,
+        ) = if let Some(v) = side_v {
+            (
+                v.rows.to_string(),
+                v.ok_rows.to_string(),
+                set_to_csv(&v.preset_effective_set),
+                v.ttft.avg(),
+                v.total.avg(),
+                v.tok_s.avg(),
+                v.decode_tok_s.avg(),
+                v.prefill_decode_ratio.avg(),
+            )
+        } else {
+            (
+                String::new(),
+                String::new(),
+                String::new(),
+                None,
+                None,
+                None,
+                None,
+                None,
+            )
+        };
+
+        let cols = vec![
+            mode,
+            num_thread,
+            keep_alive,
+            max_tokens,
+            phase_sig,
+            status.to_string(),
+            base_preset,
+            side_preset,
+            base_rows,
+            side_rows,
+            base_ok,
+            side_ok,
+            fmt_opt4(base_ttft),
+            fmt_opt4(side_ttft),
+            fmt_opt4(delta_opt(side_ttft, base_ttft)),
+            fmt_opt4(ratio_opt(side_ttft, base_ttft)),
+            fmt_opt4(base_total),
+            fmt_opt4(side_total),
+            fmt_opt4(delta_opt(side_total, base_total)),
+            fmt_opt4(ratio_opt(side_total, base_total)),
+            fmt_opt4(base_tok),
+            fmt_opt4(side_tok),
+            fmt_opt4(delta_opt(side_tok, base_tok)),
+            fmt_opt4(ratio_opt(side_tok, base_tok)),
+            fmt_opt4(base_decode),
+            fmt_opt4(side_decode),
+            fmt_opt4(delta_opt(side_decode, base_decode)),
+            fmt_opt4(ratio_opt(side_decode, base_decode)),
+            fmt_opt4(base_ratio),
+            fmt_opt4(side_ratio),
+            fmt_opt4(delta_opt(side_ratio, base_ratio)),
+        ];
+        write_tsv_row(&mut file, &cols)?;
+    }
+
+    Ok(final_out)
 }
 
 fn append_bench_worklog_summary(
@@ -2225,6 +2542,27 @@ async fn main() {
 
     let mut config = load_config(&cli.config_path);
     apply_cli_overrides(&mut config, &cli);
+
+    if let Some(baseline_path) = cli.bench_compare_baseline.as_deref() {
+        let side_path = match cli.bench_compare_side.as_deref() {
+            Some(v) => v,
+            None => {
+                eprintln!(
+                    "[bench-compare-error] --compare-side is required when --bench-compare is used"
+                );
+                return;
+            }
+        };
+        match write_bench_compare_summary(
+            baseline_path,
+            side_path,
+            cli.bench_compare_out.as_deref(),
+        ) {
+            Ok(path) => println!("[bench-compare] out={path}"),
+            Err(e) => eprintln!("[bench-compare-error] {e}"),
+        }
+        return;
+    }
 
     if let Some(input_path) = cli.bench_report_input.as_deref() {
         match write_bench_mode_summary(input_path, cli.bench_report_out.as_deref()) {

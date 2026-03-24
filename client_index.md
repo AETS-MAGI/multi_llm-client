@@ -273,6 +273,11 @@ flowchart TB
   - `--bench-report <input.tsv>`
   - 既定出力: `<input>_mode_summary.tsv`
   - `--report-out` で上書き可能
+- baseline/side の phase-summary 比較コマンドを追加:
+  - `--bench-compare <baseline_phase_summary.tsv> --compare-side <side_phase_summary.tsv>`
+  - 既定出力: `<baseline>_vs_<side>.tsv`
+  - `--compare-out` で上書き可能
+  - 差分/比率: `ttft`, `total`, `tok_s`, `decode_tok_s_proxy`, `prefill_decode_ratio`
 
 備考:
 - これは `ROCm-MI25-build` 実測（stream+rocprof で `keep_alive>=10s` が安定）の反映。
@@ -295,6 +300,7 @@ flowchart LR
 - `num_predict` 拡張レンジ sweep（`predict-sweep`）
 - bench結果の `worklog` 自動集約追記
 - bench TSV の phase/mode 集約レポート化（`*_phase_summary.tsv`, `--bench-report`）
+- baseline/side の自動比較レポート化（`--bench-compare`）
 
 次の昇格候補:
 - MCP から直接 bench 実行・要約取得するための thin API 化
