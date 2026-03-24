@@ -196,6 +196,10 @@ Output path:
 
 - Default: `worklog/bench_<mode>_<unix_ts>.tsv`
 - Override: `--out <path>`
+- Companion grouped summary (auto-generated):
+  - `<out>_phase_summary.tsv`
+  - grouped by `mode/preset/max_tokens/phase_signature`
+  - includes averaged `ttft/total/tok_s` and prefill/decode proxy metrics
 
 Auto summary:
 

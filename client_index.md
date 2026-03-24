@@ -266,6 +266,9 @@ flowchart TB
     - `decode_tok_s_proxy`, `prefill_decode_ratio`, `phase_signature`
 - ベンチ実行後の `worklog` 自動追記を追加:
   - `worklog/bench_auto_summary_YYYY-MM-DD.md` へ1行サマリをappend
+- ベンチTSVの phase 集約を自動生成:
+  - `<out>_phase_summary.tsv`
+  - `mode/preset/max_tokens/phase_signature` ごとの集約平均
 
 備考:
 - これは `ROCm-MI25-build` 実測（stream+rocprof で `keep_alive>=10s` が安定）の反映。
@@ -289,6 +292,6 @@ flowchart LR
 - bench結果の `worklog` 自動集約追記
 
 次の昇格候補:
-- phase-window 集計の Rust 化（prefill/decode proxy 指標）
 - mode別の統計比較を `multi_llm-client` 単体で出すサブコマンド化
 - MCP から直接 bench 実行・要約取得するための thin API 化
+- `phase_summary` を JSON/Markdown でも出力するレポート層

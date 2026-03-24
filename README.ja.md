@@ -192,6 +192,10 @@ TSV 列:
 
 - 既定: `worklog/bench_<mode>_<unix_ts>.tsv`
 - 上書き: `--out <path>`
+- 付随の集約サマリ（自動生成）:
+  - `<out>_phase_summary.tsv`
+  - `mode/preset/max_tokens/phase_signature` で group 化
+  - `ttft/total/tok_s` と prefill/decode proxy 指標の平均を出力
 
 自動サマリ:
 
