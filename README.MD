@@ -171,6 +171,7 @@ Supported CLI overrides:
 - `--predict-values <csv>`
 - `--bench-report <path>`
 - `--report-out <path>`
+- `--report-format <tsv|markdown|json|all>`
 - `--bench-compare <path>`
 - `--compare-side <path>`
 - `--compare-out <path>`
@@ -187,6 +188,8 @@ cargo run -- --bench thread-sweep --preset gfx900_safe --threads 2,4,6 --repeat 
 cargo run -- --bench keepalive-sweep --preset gfx900_anchor_baseline --keep-alive-values 10s,30s,5m --repeat 3
 cargo run -- --bench predict-sweep --preset gfx900_anchor_baseline --predict-values 64,128,256,512,1024 --repeat 3
 cargo run -- --bench-report worklog/bench_predict_phaseagg_smoke.tsv
+cargo run -- --bench-report worklog/bench_predict_phaseagg_smoke.tsv --report-format markdown
+cargo run -- --bench-report worklog/bench_predict_phaseagg_smoke.tsv --report-format all --report-out worklog/bench_predict_mode_summary.tsv
 cargo run -- --bench-compare worklog/bench_predict_phaseagg_smoke_phase_summary.tsv --compare-side worklog/bench_predict_side_smoke_phase_summary.tsv
 ```
 
@@ -210,6 +213,8 @@ Output path:
 - Mode-level report (post-process command):
   - `--bench-report <input.tsv>` to generate `<input>_mode_summary.tsv`
   - optional output override via `--report-out <path>`
+  - output format via `--report-format <tsv|markdown|json|all>`
+  - when `--report-format all`, `<report-out>` を基準に `.tsv/.md/.json` を同時生成
 - Baseline vs side comparison (phase summary):
   - `--bench-compare <baseline_phase_summary.tsv> --compare-side <side_phase_summary.tsv>`
   - optional output override via `--compare-out <path>`
