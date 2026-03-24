@@ -239,6 +239,30 @@ scripts/phase3_bench.sh predict-sweep --repeat 3 --preset gfx900_anchor_baseline
 4. JSONL の TTFT / total / tok/s を比較
 5. `rocm-smi` / `nvtop` の外部計測も併記
 
+## baseline / side 標準フロー
+
+anchor 比較は毎回同じ順で実行します。
+
+```bash
+cargo run -- --bench predict-sweep --preset gfx900_anchor_baseline --predict-values 64,128 --repeat 1 --out worklog/baseline.tsv
+cargo run -- --bench predict-sweep --preset gfx900_anchor_side1024 --predict-values 64,128 --repeat 1 --out worklog/side.tsv
+cargo run -- --bench-compare worklog/baseline_phase_summary.tsv --compare-side worklog/side_phase_summary.tsv --compare-out worklog/baseline_vs_side.tsv
+```
+
+命名規約:
+
+- baseline TSV: `worklog/*baseline*.tsv`
+- side TSV: `worklog/*side*.tsv`
+- compare TSV: `worklog/*_vs_*.tsv` または `worklog/*compare*.tsv`
+
+## 昇格ルール（Shell -> Rust）
+
+探索スクリプトの手順を Rust 側へ昇格する条件:
+
+1. 同じ解釈で 3 回以上再現できる
+2. 主要指標（`ttft` / `total` / `tok/s` / dispatch関連）が安定している
+3. 単発検証ではなく、継続運用フローとして繰り返し使う
+
 ## トラブルシュート
 
 ### 古い cargo で `Cargo.lock` エラー

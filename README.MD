@@ -243,6 +243,30 @@ Output TSV (default): `worklog/bench_<mode>_YYYYmmdd_HHMMSS.tsv`
 4. Compare TTFT/total/tok/s from JSONL logs.
 5. Record external GPU telemetry (`rocm-smi`, `nvtop`) in parallel.
 
+## Canonical Baseline/Side Flow
+
+Use the same command order for every anchor comparison:
+
+```bash
+cargo run -- --bench predict-sweep --preset gfx900_anchor_baseline --predict-values 64,128 --repeat 1 --out worklog/baseline.tsv
+cargo run -- --bench predict-sweep --preset gfx900_anchor_side1024 --predict-values 64,128 --repeat 1 --out worklog/side.tsv
+cargo run -- --bench-compare worklog/baseline_phase_summary.tsv --compare-side worklog/side_phase_summary.tsv --compare-out worklog/baseline_vs_side.tsv
+```
+
+Naming convention:
+
+- baseline TSV: `worklog/*baseline*.tsv`
+- side TSV: `worklog/*side*.tsv`
+- compare TSV: `worklog/*_vs_*.tsv` or `worklog/*compare*.tsv`
+
+## Promotion Criteria (Shell -> Rust)
+
+Promote workflow logic from shell probes into Rust only when all are true:
+
+1. Reproduced at least 3 times with the same interpretation.
+2. Core metrics are stable (`ttft`, `total`, `tok/s`, dispatch-related flags).
+3. It is reused as an ongoing operational flow, not a one-off probe.
+
 ## Troubleshooting
 
 ### `Cargo.lock` version error on older cargo

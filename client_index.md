@@ -305,3 +305,38 @@ flowchart LR
 次の昇格候補:
 - MCP から直接 bench 実行・要約取得するための thin API 化
 - `phase_summary` を JSON/Markdown でも出力するレポート層
+
+## 12. 標準比較フロー（baseline / side）
+
+固定手順（毎回同形で実行）:
+
+1. baseline 実行 (`gfx900_anchor_baseline`)
+2. side 実行 (`gfx900_anchor_side1024`)
+3. `*_phase_summary.tsv` 同士を `--bench-compare` で比較
+
+コマンド例:
+
+```bash
+cargo run -- --bench predict-sweep --preset gfx900_anchor_baseline --predict-values 64,128 --repeat 1 --out worklog/baseline.tsv
+cargo run -- --bench predict-sweep --preset gfx900_anchor_side1024 --predict-values 64,128 --repeat 1 --out worklog/side.tsv
+cargo run -- --bench-compare worklog/baseline_phase_summary.tsv --compare-side worklog/side_phase_summary.tsv --compare-out worklog/baseline_vs_side.tsv
+```
+
+保存先・命名規約:
+
+- baseline TSV: `worklog/*baseline*.tsv`
+- side TSV: `worklog/*side*.tsv`
+- compare TSV: `worklog/*_vs_*.tsv` または `worklog/*compare*.tsv`
+
+再確認:
+
+- `--bench-compare` の再実行確認済み（`bench_predict_baseline_vs_side_verify_20260325.tsv`）`[main-node confirmed 2026-03-25]`
+- MCP bench flow integration で baseline/side/compare の一連フロー確認済み `([bench-flow] done)` `[main-node confirmed 2026-03-25]`
+
+## 13. 昇格ルール（Shell -> Rust）
+
+探索スクリプトの処理を Rust 本体に昇格する条件:
+
+1. 同じ解釈で 3 回以上再現できる
+2. 主要指標（`ttft` / `total` / `tok/s` / dispatch関連）が安定している
+3. 単発検証ではなく、継続運用フローとして繰り返し使う
