@@ -161,10 +161,11 @@ cargo run
 - `--num-thread <n|none>`
 - `--stream <true|false>`
 - `--inline-stream <true|false>`
-- `--bench <preset-sweep|thread-sweep|keepalive-sweep|all>`
+- `--bench <preset-sweep|thread-sweep|keepalive-sweep|predict-sweep|all>`
 - `--out <path>`
 - `--threads <csv>`
 - `--keep-alive-values <csv>`
+- `--predict-values <csv>`
 - `--quiet`
 
 ## Rust内蔵ベンチモード
@@ -175,6 +176,7 @@ cargo run
 cargo run -- --bench preset-sweep --repeat 3 --prompt "short test"
 cargo run -- --bench thread-sweep --preset gfx900_safe --threads 2,4,6 --repeat 3
 cargo run -- --bench keepalive-sweep --preset gfx900_anchor_baseline --keep-alive-values 10s,30s,5m --repeat 3
+cargo run -- --bench predict-sweep --preset gfx900_anchor_baseline --predict-values 64,128,256,512,1024 --repeat 3
 ```
 
 TSV 列:
@@ -183,11 +185,18 @@ TSV 列:
 - `num_thread`, `keep_alive`, `repeat_idx`
 - `ttft_ms`, `total_ms`, `tok_s`, `response_chars`
 - `keep_alive_observability_min_ok`, `rc`, `error`
+- `max_tokens`, `prompt_eval_count`, `prompt_eval_ms`, `eval_count`, `eval_ms`
+- `decode_tok_s_proxy`, `prefill_decode_ratio`, `phase_signature`
 
 出力先:
 
 - 既定: `worklog/bench_<mode>_<unix_ts>.tsv`
 - 上書き: `--out <path>`
+
+自動サマリ:
+
+- ベンチ実行後、集約1行サマリを以下へ追記します:
+  - `worklog/bench_auto_summary_YYYY-MM-DD.md`
 
 ## Phase3 自動ベンチスクリプト
 
@@ -199,6 +208,7 @@ TSV 列:
 scripts/phase3_bench.sh preset-sweep --repeat 3 --prompt "short test"
 scripts/phase3_bench.sh thread-sweep --repeat 3 --preset gfx900_safe --threads 2,4,6
 scripts/phase3_bench.sh keepalive-sweep --repeat 3 --keep-alive-values 10s,30s,5m
+scripts/phase3_bench.sh predict-sweep --repeat 3 --preset gfx900_anchor_baseline --predict-values 64,128,256,512,1024
 ```
 
 既定の出力先: `worklog/bench_<mode>_YYYYmmdd_HHMMSS.tsv`

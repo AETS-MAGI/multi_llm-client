@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::env;
 use std::fs;
 use std::io::{self, Write};
@@ -943,6 +944,7 @@ enum BenchMode {
     PresetSweep,
     ThreadSweep,
     KeepaliveSweep,
+    PredictSweep,
     All,
 }
 
@@ -952,13 +954,20 @@ impl BenchMode {
             "preset-sweep" => Some(Self::PresetSweep),
             "thread-sweep" => Some(Self::ThreadSweep),
             "keepalive-sweep" => Some(Self::KeepaliveSweep),
+            "predict-sweep" => Some(Self::PredictSweep),
             "all" => Some(Self::All),
             _ => None,
         }
     }
 
     fn all_names() -> &'static [&'static str] {
-        &["preset-sweep", "thread-sweep", "keepalive-sweep", "all"]
+        &[
+            "preset-sweep",
+            "thread-sweep",
+            "keepalive-sweep",
+            "predict-sweep",
+            "all",
+        ]
     }
 
     fn as_str(&self) -> &'static str {
@@ -966,6 +975,7 @@ impl BenchMode {
             Self::PresetSweep => "preset-sweep",
             Self::ThreadSweep => "thread-sweep",
             Self::KeepaliveSweep => "keepalive-sweep",
+            Self::PredictSweep => "predict-sweep",
             Self::All => "all",
         }
     }
@@ -1000,6 +1010,7 @@ struct CliArgs {
     bench_out: Option<String>,
     bench_threads_csv: Option<String>,
     bench_keep_alive_csv: Option<String>,
+    bench_predict_values_csv: Option<String>,
     quiet: bool,
 }
 
@@ -1021,6 +1032,7 @@ impl Default for CliArgs {
             bench_out: None,
             bench_threads_csv: None,
             bench_keep_alive_csv: None,
+            bench_predict_values_csv: None,
             quiet: false,
         }
     }
@@ -1044,6 +1056,7 @@ fn print_usage() {
          \t--out <path>                TSV output path for --bench mode\n\
          \t--threads <csv>             Thread set for --bench thread-sweep (default: 2,4,6)\n\
          \t--keep-alive-values <csv>   keep_alive set for --bench keepalive-sweep (default: 10s,30s,5m)\n\
+         \t--predict-values <csv>      max_tokens set for --bench predict-sweep (default: 64,128,256,512,1024)\n\
          \t--quiet                     Suppress banner and response echo in one-shot mode\n\
          \t-h, --help                  Show this help\n",
         Preset::all_names().join(", "),
@@ -1217,6 +1230,12 @@ fn parse_cli_args() -> Result<CliArgs, String> {
                     .ok_or_else(|| "--keep-alive-values requires a value".to_string())?;
                 cli.bench_keep_alive_csv = Some(value);
             }
+            "--predict-values" => {
+                let value = args
+                    .next()
+                    .ok_or_else(|| "--predict-values requires a value".to_string())?;
+                cli.bench_predict_values_csv = Some(value);
+            }
             "--quiet" => {
                 cli.quiet = true;
             }
@@ -1280,6 +1299,24 @@ fn parse_threads_csv(csv: &str) -> Result<Vec<u32>, String> {
     Ok(out)
 }
 
+fn parse_predict_values_csv(csv: &str) -> Result<Vec<u32>, String> {
+    let tokens = parse_csv_tokens(csv);
+    if tokens.is_empty() {
+        return Err("--predict-values must not be empty".to_string());
+    }
+    let mut out = Vec::new();
+    for t in tokens {
+        let parsed = t
+            .parse::<u32>()
+            .map_err(|_| format!("invalid --predict-values value: {t}"))?;
+        if parsed == 0 {
+            return Err("--predict-values must contain values >= 1".to_string());
+        }
+        out.push(parsed);
+    }
+    Ok(out)
+}
+
 fn latest_log_record(log_dir: &str) -> Result<Value, String> {
     let day_path = format!("{}/infer-{}.jsonl", log_dir, ts_to_ymd(current_unix_secs()));
     let chosen_path = if Path::new(&day_path).exists() {
@@ -1318,6 +1355,159 @@ fn safe_tsv(s: &str) -> String {
     s.replace(['\t', '\n', '\r'], " ")
 }
 
+fn write_tsv_row(out_file: &mut fs::File, cols: &[String]) -> Result<(), String> {
+    writeln!(out_file, "{}", cols.join("\t")).map_err(|e| format!("ベンチ行書き込み失敗: {e}"))
+}
+
+fn phase_signature(prompt_eval_ns: Option<u64>, eval_ns: Option<u64>) -> String {
+    match (prompt_eval_ns.unwrap_or(0), eval_ns.unwrap_or(0)) {
+        (p, e) if p > 0 && e > 0 => "prefill+decode".to_string(),
+        (0, e) if e > 0 => "decode-only".to_string(),
+        (p, 0) if p > 0 => "prefill-only".to_string(),
+        _ => "unavailable".to_string(),
+    }
+}
+
+fn append_bench_worklog_summary(
+    out_path: &str,
+    bench_mode: BenchMode,
+    repeat: u32,
+) -> Result<(), String> {
+    let content = fs::read_to_string(out_path)
+        .map_err(|e| format!("ベンチ結果読み取り失敗 ({out_path}): {e}"))?;
+
+    let mut rows = 0u64;
+    let mut ok_rows = 0u64;
+
+    let mut ttft_sum = 0f64;
+    let mut ttft_n = 0u64;
+    let mut total_sum = 0f64;
+    let mut total_n = 0u64;
+    let mut tok_sum = 0f64;
+    let mut tok_n = 0u64;
+    let mut prefill_sum = 0f64;
+    let mut prefill_n = 0u64;
+    let mut decode_sum = 0f64;
+    let mut decode_n = 0u64;
+    let mut phase_counts: BTreeMap<String, u64> = BTreeMap::new();
+    let mut preset_counts: BTreeMap<String, u64> = BTreeMap::new();
+
+    for line in content.lines().skip(1) {
+        if line.trim().is_empty() {
+            continue;
+        }
+        rows += 1;
+        let cols: Vec<&str> = line.split('\t').collect();
+        if cols.len() < 15 {
+            continue;
+        }
+
+        if cols[13] == "0" {
+            ok_rows += 1;
+        }
+        if let Ok(v) = cols[8].parse::<f64>() {
+            ttft_sum += v;
+            ttft_n += 1;
+        }
+        if let Ok(v) = cols[9].parse::<f64>() {
+            total_sum += v;
+            total_n += 1;
+        }
+        if let Ok(v) = cols[10].parse::<f64>() {
+            tok_sum += v;
+            tok_n += 1;
+        }
+        if cols.len() > 17 {
+            if let Ok(v) = cols[17].parse::<f64>() {
+                prefill_sum += v;
+                prefill_n += 1;
+            }
+        }
+        if cols.len() > 19 {
+            if let Ok(v) = cols[19].parse::<f64>() {
+                decode_sum += v;
+                decode_n += 1;
+            }
+        }
+        if cols.len() > 22 && !cols[22].is_empty() {
+            *phase_counts.entry(cols[22].to_string()).or_insert(0) += 1;
+        }
+        if !cols[4].is_empty() {
+            *preset_counts.entry(cols[4].to_string()).or_insert(0) += 1;
+        }
+    }
+
+    if rows == 0 {
+        return Ok(());
+    }
+
+    let avg = |sum: f64, n: u64| -> String {
+        if n == 0 {
+            "n/a".to_string()
+        } else {
+            format!("{:.2}", sum / (n as f64))
+        }
+    };
+
+    let dominant_phase = phase_counts
+        .iter()
+        .max_by_key(|(_, count)| *count)
+        .map(|(k, _)| k.clone())
+        .unwrap_or_else(|| "n/a".to_string());
+
+    let preset_digest = if preset_counts.is_empty() {
+        "n/a".to_string()
+    } else {
+        preset_counts
+            .iter()
+            .map(|(k, v)| format!("{k}:{v}"))
+            .collect::<Vec<_>>()
+            .join(",")
+    };
+
+    let summary_path = format!(
+        "worklog/bench_auto_summary_{}.md",
+        ts_to_ymd(current_unix_secs())
+    );
+    let mut file = fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&summary_path)
+        .map_err(|e| format!("worklog追記失敗 ({summary_path}): {e}"))?;
+
+    if file
+        .metadata()
+        .map_err(|e| format!("worklogメタデータ取得失敗: {e}"))?
+        .len()
+        == 0
+    {
+        writeln!(file, "# Bench Auto Summary")
+            .map_err(|e| format!("worklogヘッダ書き込み失敗: {e}"))?;
+        writeln!(file).map_err(|e| format!("worklog改行書き込み失敗: {e}"))?;
+    }
+
+    writeln!(
+        file,
+        "- ts={} mode={} repeat={} rows={} ok={} avg_ttft_ms={} avg_total_ms={} avg_tok_s={} avg_prefill_ms={} avg_decode_eval_ms={} dominant_phase={} presets={} out={}",
+        current_unix_secs(),
+        bench_mode.as_str(),
+        repeat,
+        rows,
+        ok_rows,
+        avg(ttft_sum, ttft_n),
+        avg(total_sum, total_n),
+        avg(tok_sum, tok_n),
+        avg(prefill_sum, prefill_n),
+        avg(decode_sum, decode_n),
+        dominant_phase,
+        preset_digest,
+        out_path
+    )
+    .map_err(|e| format!("worklog追記失敗: {e}"))?;
+
+    Ok(())
+}
+
 async fn run_bench_case(
     base_config: &Config,
     mode: &str,
@@ -1327,6 +1517,7 @@ async fn run_bench_case(
     requested_preset_name: &str,
     num_thread_override: Option<u32>,
     keep_alive_override: Option<&str>,
+    max_tokens_override: Option<u32>,
     out_file: &mut fs::File,
 ) -> Result<(), String> {
     for rep_idx in 1..=repeat {
@@ -1344,16 +1535,20 @@ async fn run_bench_case(
         if let Some(keep_alive) = keep_alive_override {
             run_config.keep_alive = Some(keep_alive.to_string());
         }
+        if let Some(max_tokens) = max_tokens_override {
+            run_config.max_tokens = Some(max_tokens);
+        }
 
         let app = match App::new(run_config.clone()) {
             Ok(v) => v,
             Err(e) => {
-                writeln!(
-                    out_file,
-                    "0\t{}\t{}\t\t{}\t{}\t{}\t{}\t\t\t\t\t\t{}\t1\t{}",
-                    mode,
-                    run_config.model_name,
-                    requested_preset_name,
+                let effective = EffectiveConfig::from_config(&run_config);
+                let row = vec![
+                    "0".to_string(),
+                    mode.to_string(),
+                    run_config.model_name.clone(),
+                    String::new(),
+                    requested_preset_name.to_string(),
                     run_config
                         .num_thread
                         .map(|v| v.to_string())
@@ -1362,11 +1557,24 @@ async fn run_bench_case(
                         .keep_alive
                         .clone()
                         .unwrap_or_else(|| "none".to_string()),
-                    rep_idx,
-                    "",
-                    safe_tsv(&e)
-                )
-                .map_err(|w| format!("ベンチ行書き込み失敗: {w}"))?;
+                    rep_idx.to_string(),
+                    String::new(),
+                    String::new(),
+                    String::new(),
+                    String::new(),
+                    String::new(),
+                    "1".to_string(),
+                    safe_tsv(&e),
+                    effective.max_tokens.to_string(),
+                    String::new(),
+                    String::new(),
+                    String::new(),
+                    String::new(),
+                    String::new(),
+                    String::new(),
+                    "unavailable".to_string(),
+                ];
+                write_tsv_row(out_file, &row)?;
                 continue;
             }
         };
@@ -1383,6 +1591,14 @@ async fn run_bench_case(
         let mut keep_alive_obs_ok = String::new();
         let mut error_text = String::new();
         let mut rc = 0;
+        let mut max_tokens = app.effective.max_tokens.to_string();
+        let mut prompt_eval_count = String::new();
+        let mut prompt_eval_ms = String::new();
+        let mut eval_count = String::new();
+        let mut eval_ms = String::new();
+        let mut decode_tok_s_proxy = String::new();
+        let mut prefill_decode_ratio = String::new();
+        let mut phase_sig = "unavailable".to_string();
 
         match record {
             Ok(log) => {
@@ -1395,6 +1611,13 @@ async fn run_bench_case(
                     .and_then(|v| v.as_str())
                     .unwrap_or("")
                     .to_string();
+                if let Some(v) = log
+                    .get("effective")
+                    .and_then(|e| e.get("max_tokens"))
+                    .and_then(as_u64_flexible)
+                {
+                    max_tokens = v.to_string();
+                }
                 ttft_ms = log
                     .get("ttft_ms")
                     .and_then(as_u64_flexible)
@@ -1415,6 +1638,51 @@ async fn run_bench_case(
                     .and_then(as_u64_flexible)
                     .map(|v| v.to_string())
                     .unwrap_or_default();
+
+                let prompt_eval_ns = log
+                    .get("ollama_metrics")
+                    .and_then(|m| m.get("prompt_eval_duration"))
+                    .and_then(as_u64_flexible);
+                let eval_ns = log
+                    .get("ollama_metrics")
+                    .and_then(|m| m.get("eval_duration"))
+                    .and_then(as_u64_flexible);
+                let prompt_count = log
+                    .get("ollama_metrics")
+                    .and_then(|m| m.get("prompt_eval_count"))
+                    .and_then(as_u64_flexible);
+                let eval_count_num = log
+                    .get("ollama_metrics")
+                    .and_then(|m| m.get("eval_count"))
+                    .and_then(as_u64_flexible);
+
+                if let Some(v) = prompt_count {
+                    prompt_eval_count = v.to_string();
+                }
+                if let Some(v) = eval_count_num {
+                    eval_count = v.to_string();
+                }
+                if let Some(v) = prompt_eval_ns {
+                    prompt_eval_ms = format!("{:.3}", (v as f64) / 1_000_000.0);
+                }
+                if let Some(v) = eval_ns {
+                    eval_ms = format!("{:.3}", (v as f64) / 1_000_000.0);
+                }
+                if let (Some(count), Some(duration_ns)) = (eval_count_num, eval_ns) {
+                    if duration_ns > 0 {
+                        decode_tok_s_proxy = format!(
+                            "{:.4}",
+                            count as f64 / (duration_ns as f64 / 1_000_000_000.0)
+                        );
+                    }
+                }
+                if let (Some(p), Some(e)) = (prompt_eval_ns, eval_ns) {
+                    if e > 0 {
+                        prefill_decode_ratio = format!("{:.4}", p as f64 / e as f64);
+                    }
+                }
+                phase_sig = phase_signature(prompt_eval_ns, eval_ns);
+
                 keep_alive_obs_ok = match log
                     .get("keep_alive_observability_min_ok")
                     .and_then(|v| v.as_bool())
@@ -1442,14 +1710,12 @@ async fn run_bench_case(
             error_text = response;
         }
 
-        writeln!(
-            out_file,
-            "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
+        let row = vec![
             ts_unix,
-            mode,
-            run_config.model_name,
+            mode.to_string(),
+            run_config.model_name.clone(),
             preset_effective,
-            requested_preset_name,
+            requested_preset_name.to_string(),
             run_config
                 .num_thread
                 .map(|v| v.to_string())
@@ -1458,16 +1724,24 @@ async fn run_bench_case(
                 .keep_alive
                 .clone()
                 .unwrap_or_else(|| "none".to_string()),
-            rep_idx,
+            rep_idx.to_string(),
             ttft_ms,
             total_ms,
             tok_s,
             response_chars,
             keep_alive_obs_ok,
-            rc,
-            safe_tsv(&error_text)
-        )
-        .map_err(|e| format!("ベンチ行書き込み失敗: {e}"))?;
+            rc.to_string(),
+            safe_tsv(&error_text),
+            max_tokens,
+            prompt_eval_count,
+            prompt_eval_ms,
+            eval_count,
+            eval_ms,
+            decode_tok_s_proxy,
+            prefill_decode_ratio,
+            phase_sig,
+        ];
+        write_tsv_row(out_file, &row)?;
     }
 
     Ok(())
@@ -1502,7 +1776,7 @@ async fn run_benchmark(base_config: &Config, cli: &CliArgs) -> Result<(), String
 
     writeln!(
         out_file,
-        "ts_unix\tmode\tmodel\tpreset_effective\trequested_preset\tnum_thread\tkeep_alive\trepeat_idx\tttft_ms\ttotal_ms\ttok_s\tresponse_chars\tkeep_alive_observability_min_ok\trc\terror"
+        "ts_unix\tmode\tmodel\tpreset_effective\trequested_preset\tnum_thread\tkeep_alive\trepeat_idx\tttft_ms\ttotal_ms\ttok_s\tresponse_chars\tkeep_alive_observability_min_ok\trc\terror\tmax_tokens\tprompt_eval_count\tprompt_eval_ms\teval_count\teval_ms\tdecode_tok_s_proxy\tprefill_decode_ratio\tphase_signature"
     )
     .map_err(|e| format!("ベンチヘッダ書き込み失敗: {e}"))?;
 
@@ -1514,6 +1788,11 @@ async fn run_benchmark(base_config: &Config, cli: &CliArgs) -> Result<(), String
     if keep_alive_set.is_empty() {
         return Err("--keep-alive-values must not be empty".to_string());
     }
+    let predict_values_csv = cli
+        .bench_predict_values_csv
+        .as_deref()
+        .unwrap_or("64,128,256,512,1024");
+    let predict_values_set = parse_predict_values_csv(predict_values_csv)?;
 
     let preset_cases = vec![
         Preset::Gfx900Safe,
@@ -1535,6 +1814,7 @@ async fn run_benchmark(base_config: &Config, cli: &CliArgs) -> Result<(), String
                 preset_name(preset),
                 None,
                 None,
+                None,
                 &mut out_file,
             )
             .await?;
@@ -1551,6 +1831,7 @@ async fn run_benchmark(base_config: &Config, cli: &CliArgs) -> Result<(), String
                 Some(base_preset.clone()),
                 preset_name(&base_preset),
                 Some(*t),
+                None,
                 None,
                 &mut out_file,
             )
@@ -1569,6 +1850,25 @@ async fn run_benchmark(base_config: &Config, cli: &CliArgs) -> Result<(), String
                 preset_name(&base_preset),
                 None,
                 Some(keep_alive),
+                None,
+                &mut out_file,
+            )
+            .await?;
+        }
+    }
+
+    if matches!(bench_mode, BenchMode::PredictSweep | BenchMode::All) {
+        for predict in &predict_values_set {
+            run_bench_case(
+                base_config,
+                "predict-sweep",
+                &prompt,
+                repeat,
+                Some(base_preset.clone()),
+                preset_name(&base_preset),
+                None,
+                None,
+                Some(*predict),
                 &mut out_file,
             )
             .await?;
@@ -1581,6 +1881,9 @@ async fn run_benchmark(base_config: &Config, cli: &CliArgs) -> Result<(), String
         repeat,
         out_path
     );
+    if let Err(e) = append_bench_worklog_summary(&out_path, bench_mode, repeat) {
+        eprintln!("[bench-warn] worklog summary append failed: {e}");
+    }
     Ok(())
 }
 

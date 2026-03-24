@@ -13,7 +13,8 @@ Modes:
   preset-sweep     Run repeated benchmark across gfx900 presets.
   thread-sweep     Run repeated benchmark across num_thread set (safe preset by default).
   keepalive-sweep  Run repeated benchmark across keep_alive values (safe preset by default).
-  all              Run all three modes sequentially.
+  predict-sweep    Run repeated benchmark across max_tokens (num_predict proxy).
+  all              Run all benchmark modes sequentially.
 
 Options:
   --model <name>                Model name override (default: tinyllama:latest)
@@ -23,9 +24,10 @@ Options:
   --preset <name>               Base preset for thread/keepalive sweep (default: gfx900_safe)
   --threads <csv>               Thread list for thread-sweep (default: 2,4,6)
   --keep-alive-values <csv>     Keep-alive set for keepalive-sweep (default: 10s,30s,5m)
+  --predict-values <csv>        max_tokens set for predict-sweep (default: 64,128,256,512,1024)
 
 Environment variables (optional):
-  MODEL, PROMPT, REPEAT, OUT, PRESET, THREADS, KEEP_ALIVE_VALUES
+  MODEL, PROMPT, REPEAT, OUT, PRESET, THREADS, KEEP_ALIVE_VALUES, PREDICT_VALUES
 USAGE
 }
 
@@ -43,7 +45,7 @@ if [[ "$MODE" == "-h" || "$MODE" == "--help" ]]; then
 fi
 
 case "$MODE" in
-  preset-sweep|thread-sweep|keepalive-sweep|all)
+  preset-sweep|thread-sweep|keepalive-sweep|predict-sweep|all)
     ;;
   *)
     echo "[error] unknown mode: $MODE" >&2
@@ -59,6 +61,7 @@ OUT="${OUT:-worklog/bench_${MODE}_$(date +%Y%m%d_%H%M%S).tsv}"
 PRESET="${PRESET:-gfx900_safe}"
 THREADS_CSV="${THREADS:-2,4,6}"
 KEEP_ALIVE_CSV="${KEEP_ALIVE_VALUES:-10s,30s,5m}"
+PREDICT_VALUES_CSV="${PREDICT_VALUES:-64,128,256,512,1024}"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -88,6 +91,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --keep-alive-values)
       KEEP_ALIVE_CSV="$2"
+      shift 2
+      ;;
+    --predict-values)
+      PREDICT_VALUES_CSV="$2"
       shift 2
       ;;
     -h|--help)
@@ -168,6 +175,7 @@ CLIENT_BIN="$(resolve_client_bin)"
   --preset "$PRESET" \
   --threads "$THREADS_CSV" \
   --keep-alive-values "$KEEP_ALIVE_CSV" \
+  --predict-values "$PREDICT_VALUES_CSV" \
   --out "$OUT"
 
 echo "[info] benchmark output: $OUT"

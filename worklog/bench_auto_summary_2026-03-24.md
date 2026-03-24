@@ -1,0 +1,5 @@
+# Bench Auto Summary
+
+- ts=1774326124 mode=predict-sweep repeat=1 rows=2 ok=2 avg_ttft_ms=572.50 avg_total_ms=1065.50 avg_tok_s=213.91 avg_prefill_ms=55.28 avg_decode_eval_ms=446.25 dominant_phase=prefill+decode presets=gfx900_anchor_baseline:2 out=worklog/bench_predict_smoke.tsv
+- ts=1774326156 mode=predict-sweep repeat=1 rows=1 ok=1 avg_ttft_ms=80.00 avg_total_ms=415.00 avg_tok_s=213.64 avg_prefill_ms=5.84 avg_decode_eval_ms=299.57 dominant_phase=prefill+decode presets=gfx900_anchor_baseline:1 out=worklog/bench_predict_smoke2.tsv
+- ts=1774326172 mode=predict-sweep repeat=1 rows=1 ok=1 avg_ttft_ms=1775.00 avg_total_ms=2127.00 avg_tok_s=205.76 avg_prefill_ms=129.26 avg_decode_eval_ms=311.05 dominant_phase=prefill+decode presets=gfx900_safe:1 out=worklog/bench_predict_wrapper.tsv

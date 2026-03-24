@@ -212,10 +212,10 @@ flowchart TB
   - `InferenceStats`（`streaming_response` 追加、`ttft_ms`/`total_ms` 改良）
   - `ollama_inference`（計測開始タイミングを `req.send` 前へ移動）
   - one-shot 実行用 CLI (`--prompt`, `--repeat`, `--preset`, `--num-thread`, `--keep-alive` など)
-  - built-in benchmark CLI (`--bench`, `--out`, `--threads`, `--keep-alive-values`)
+  - built-in benchmark CLI (`--bench`, `--out`, `--threads`, `--keep-alive-values`, `--predict-values`)
   - `num_thread` の設定追加と `options.num_thread` 反映
 - `multi_llm-client/scripts/phase3_bench.sh`
-  - Phase3 向け sweep（preset/thread/keep_alive）をスクリプト化
+  - Rust内蔵 `--bench` の薄いラッパーとして運用導線化
 
 ## 8. 次にやる最適化（この地図に沿った順）
 
@@ -259,9 +259,13 @@ flowchart TB
 - `scripts/phase3_bench.sh` の keepalive 既定セットを安定側へ更新:
   - `10s,30s,5m`
 - Rust 内蔵ベンチモードを追加:
-  - `--bench preset-sweep|thread-sweep|keepalive-sweep|all`
-  - `--out` / `--threads` / `--keep-alive-values`
-  - TSV へ `keep_alive_observability_min_ok` を含めて出力
+  - `--bench preset-sweep|thread-sweep|keepalive-sweep|predict-sweep|all`
+  - `--out` / `--threads` / `--keep-alive-values` / `--predict-values`
+  - TSV へ `keep_alive_observability_min_ok` + prefill/decode proxy 列を出力
+    - `prompt_eval_count`, `prompt_eval_ms`, `eval_count`, `eval_ms`
+    - `decode_tok_s_proxy`, `prefill_decode_ratio`, `phase_signature`
+- ベンチ実行後の `worklog` 自動追記を追加:
+  - `worklog/bench_auto_summary_YYYY-MM-DD.md` へ1行サマリをappend
 
 備考:
 - これは `ROCm-MI25-build` 実測（stream+rocprof で `keep_alive>=10s` が安定）の反映。
@@ -281,8 +285,10 @@ flowchart LR
 - anchor preset（`gfx900_anchor_baseline`, `gfx900_anchor_side1024`）
 - observability guard（`keep_alive >= 10s` 警告 + JSONLフラグ）
 - built-in benchmark (`--bench` 系)
+- `num_predict` 拡張レンジ sweep（`predict-sweep`）
+- bench結果の `worklog` 自動集約追記
 
 次の昇格候補:
 - phase-window 集計の Rust 化（prefill/decode proxy 指標）
-- `num_predict` 拡張レンジ sweep の内蔵化
-- `worklog` 自動追記（実験条件 + 代表統計の1行要約）
+- mode別の統計比較を `multi_llm-client` 単体で出すサブコマンド化
+- MCP から直接 bench 実行・要約取得するための thin API 化
