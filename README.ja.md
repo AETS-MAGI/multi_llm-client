@@ -166,6 +166,8 @@ cargo run
 - `--threads <csv>`
 - `--keep-alive-values <csv>`
 - `--predict-values <csv>`
+- `--bench-report <path>`
+- `--report-out <path>`
 - `--quiet`
 
 ## Rust内蔵ベンチモード
@@ -177,6 +179,7 @@ cargo run -- --bench preset-sweep --repeat 3 --prompt "short test"
 cargo run -- --bench thread-sweep --preset gfx900_safe --threads 2,4,6 --repeat 3
 cargo run -- --bench keepalive-sweep --preset gfx900_anchor_baseline --keep-alive-values 10s,30s,5m --repeat 3
 cargo run -- --bench predict-sweep --preset gfx900_anchor_baseline --predict-values 64,128,256,512,1024 --repeat 3
+cargo run -- --bench-report worklog/bench_predict_phaseagg_smoke.tsv
 ```
 
 TSV 列:
@@ -196,6 +199,9 @@ TSV 列:
   - `<out>_phase_summary.tsv`
   - `mode/preset/max_tokens/phase_signature` で group 化
   - `ttft/total/tok_s` と prefill/decode proxy 指標の平均を出力
+- mode集約レポート（後処理コマンド）:
+  - `--bench-report <input.tsv>` で `<input>_mode_summary.tsv` を生成
+  - 出力先は `--report-out <path>` で上書き可能
 
 自動サマリ:
 

@@ -169,6 +169,8 @@ Supported CLI overrides:
 - `--threads <csv>`
 - `--keep-alive-values <csv>`
 - `--predict-values <csv>`
+- `--bench-report <path>`
+- `--report-out <path>`
 - `--quiet`
 
 ## Built-in Benchmark Mode (Rust)
@@ -181,6 +183,7 @@ cargo run -- --bench preset-sweep --repeat 3 --prompt "short test"
 cargo run -- --bench thread-sweep --preset gfx900_safe --threads 2,4,6 --repeat 3
 cargo run -- --bench keepalive-sweep --preset gfx900_anchor_baseline --keep-alive-values 10s,30s,5m --repeat 3
 cargo run -- --bench predict-sweep --preset gfx900_anchor_baseline --predict-values 64,128,256,512,1024 --repeat 3
+cargo run -- --bench-report worklog/bench_predict_phaseagg_smoke.tsv
 ```
 
 TSV columns:
@@ -200,6 +203,9 @@ Output path:
   - `<out>_phase_summary.tsv`
   - grouped by `mode/preset/max_tokens/phase_signature`
   - includes averaged `ttft/total/tok_s` and prefill/decode proxy metrics
+- Mode-level report (post-process command):
+  - `--bench-report <input.tsv>` to generate `<input>_mode_summary.tsv`
+  - optional output override via `--report-out <path>`
 
 Auto summary:
 
