@@ -2023,7 +2023,22 @@ async fn run_benchmark(base_config: &Config, cli: &CliArgs) -> Result<(), String
         repeat,
         out_path
     );
-    if let Err(e) = append_bench_worklog_summary(&out_path, bench_mode, repeat) {
+    let phase_summary_path = match write_bench_phase_summary(&out_path) {
+        Ok(path) => {
+            println!("[bench] phase_summary={path}");
+            Some(path)
+        }
+        Err(e) => {
+            eprintln!("[bench-warn] phase summary generation failed: {e}");
+            None
+        }
+    };
+    if let Err(e) = append_bench_worklog_summary(
+        &out_path,
+        bench_mode,
+        repeat,
+        phase_summary_path.as_deref(),
+    ) {
         eprintln!("[bench-warn] worklog summary append failed: {e}");
     }
     Ok(())
