@@ -1368,10 +1368,155 @@ fn phase_signature(prompt_eval_ns: Option<u64>, eval_ns: Option<u64>) -> String 
     }
 }
 
+#[derive(Default, Clone)]
+struct BenchGroupStats {
+    rows: u64,
+    ok_rows: u64,
+    ttft_sum: f64,
+    ttft_n: u64,
+    total_sum: f64,
+    total_n: u64,
+    tok_sum: f64,
+    tok_n: u64,
+    prompt_eval_sum: f64,
+    prompt_eval_n: u64,
+    eval_sum: f64,
+    eval_n: u64,
+    decode_tok_sum: f64,
+    decode_tok_n: u64,
+    ratio_sum: f64,
+    ratio_n: u64,
+}
+
+fn parse_f64_col(cols: &[&str], idx: usize) -> Option<f64> {
+    cols.get(idx).and_then(|v| v.parse::<f64>().ok())
+}
+
+fn write_bench_phase_summary(out_path: &str) -> Result<String, String> {
+    let content = fs::read_to_string(out_path)
+        .map_err(|e| format!("ベンチ結果読み取り失敗 ({out_path}): {e}"))?;
+
+    type GroupKey = (String, String, String, String, String, String, String);
+    let mut groups: BTreeMap<GroupKey, BenchGroupStats> = BTreeMap::new();
+
+    for line in content.lines().skip(1) {
+        if line.trim().is_empty() {
+            continue;
+        }
+        let cols: Vec<&str> = line.split('\t').collect();
+        if cols.len() < 23 {
+            continue;
+        }
+
+        let key = (
+            cols[1].to_string(),  // mode
+            cols[3].to_string(),  // preset_effective
+            cols[4].to_string(),  // requested_preset
+            cols[5].to_string(),  // num_thread
+            cols[6].to_string(),  // keep_alive
+            cols[15].to_string(), // max_tokens
+            cols[22].to_string(), // phase_signature
+        );
+
+        let g = groups.entry(key).or_default();
+        g.rows += 1;
+        if cols[13] == "0" {
+            g.ok_rows += 1;
+        }
+
+        if let Some(v) = parse_f64_col(&cols, 8) {
+            g.ttft_sum += v;
+            g.ttft_n += 1;
+        }
+        if let Some(v) = parse_f64_col(&cols, 9) {
+            g.total_sum += v;
+            g.total_n += 1;
+        }
+        if let Some(v) = parse_f64_col(&cols, 10) {
+            g.tok_sum += v;
+            g.tok_n += 1;
+        }
+        if let Some(v) = parse_f64_col(&cols, 17) {
+            g.prompt_eval_sum += v;
+            g.prompt_eval_n += 1;
+        }
+        if let Some(v) = parse_f64_col(&cols, 19) {
+            g.eval_sum += v;
+            g.eval_n += 1;
+        }
+        if let Some(v) = parse_f64_col(&cols, 20) {
+            g.decode_tok_sum += v;
+            g.decode_tok_n += 1;
+        }
+        if let Some(v) = parse_f64_col(&cols, 21) {
+            g.ratio_sum += v;
+            g.ratio_n += 1;
+        }
+    }
+
+    let out = Path::new(out_path);
+    let parent = out.parent().unwrap_or_else(|| Path::new("."));
+    let stem = out
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .ok_or_else(|| format!("ベンチ出力名解析失敗: {out_path}"))?;
+    let summary_path = parent.join(format!("{stem}_phase_summary.tsv"));
+
+    let mut file = fs::File::create(&summary_path).map_err(|e| {
+        format!(
+            "phase summary TSV作成失敗 ({}): {e}",
+            summary_path.display()
+        )
+    })?;
+
+    writeln!(
+        file,
+        "mode\tpreset_effective\trequested_preset\tnum_thread\tkeep_alive\tmax_tokens\tphase_signature\trows\tok_rows\tavg_ttft_ms\tavg_total_ms\tavg_tok_s\tavg_prompt_eval_ms\tavg_eval_ms\tavg_decode_tok_s_proxy\tavg_prefill_decode_ratio"
+    )
+    .map_err(|e| format!("phase summary ヘッダ書き込み失敗: {e}"))?;
+
+    let avg = |sum: f64, n: u64| -> String {
+        if n == 0 {
+            String::new()
+        } else {
+            format!("{:.4}", sum / (n as f64))
+        }
+    };
+
+    for ((mode, preset_effective, requested_preset, num_thread, keep_alive, max_tokens, phase), g) in
+        groups
+    {
+        writeln!(
+            file,
+            "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
+            mode,
+            preset_effective,
+            requested_preset,
+            num_thread,
+            keep_alive,
+            max_tokens,
+            phase,
+            g.rows,
+            g.ok_rows,
+            avg(g.ttft_sum, g.ttft_n),
+            avg(g.total_sum, g.total_n),
+            avg(g.tok_sum, g.tok_n),
+            avg(g.prompt_eval_sum, g.prompt_eval_n),
+            avg(g.eval_sum, g.eval_n),
+            avg(g.decode_tok_sum, g.decode_tok_n),
+            avg(g.ratio_sum, g.ratio_n)
+        )
+        .map_err(|e| format!("phase summary 行書き込み失敗: {e}"))?;
+    }
+
+    Ok(summary_path.display().to_string())
+}
+
 fn append_bench_worklog_summary(
     out_path: &str,
     bench_mode: BenchMode,
     repeat: u32,
+    phase_summary_path: Option<&str>,
 ) -> Result<(), String> {
     let content = fs::read_to_string(out_path)
         .map_err(|e| format!("ベンチ結果読み取り失敗 ({out_path}): {e}"))?;
@@ -1405,29 +1550,25 @@ fn append_bench_worklog_summary(
         if cols[13] == "0" {
             ok_rows += 1;
         }
-        if let Ok(v) = cols[8].parse::<f64>() {
+        if let Some(v) = parse_f64_col(&cols, 8) {
             ttft_sum += v;
             ttft_n += 1;
         }
-        if let Ok(v) = cols[9].parse::<f64>() {
+        if let Some(v) = parse_f64_col(&cols, 9) {
             total_sum += v;
             total_n += 1;
         }
-        if let Ok(v) = cols[10].parse::<f64>() {
+        if let Some(v) = parse_f64_col(&cols, 10) {
             tok_sum += v;
             tok_n += 1;
         }
-        if cols.len() > 17 {
-            if let Ok(v) = cols[17].parse::<f64>() {
-                prefill_sum += v;
-                prefill_n += 1;
-            }
+        if let Some(v) = parse_f64_col(&cols, 17) {
+            prefill_sum += v;
+            prefill_n += 1;
         }
-        if cols.len() > 19 {
-            if let Ok(v) = cols[19].parse::<f64>() {
-                decode_sum += v;
-                decode_n += 1;
-            }
+        if let Some(v) = parse_f64_col(&cols, 19) {
+            decode_sum += v;
+            decode_n += 1;
         }
         if cols.len() > 22 && !cols[22].is_empty() {
             *phase_counts.entry(cols[22].to_string()).or_insert(0) += 1;
@@ -1488,7 +1629,7 @@ fn append_bench_worklog_summary(
 
     writeln!(
         file,
-        "- ts={} mode={} repeat={} rows={} ok={} avg_ttft_ms={} avg_total_ms={} avg_tok_s={} avg_prefill_ms={} avg_decode_eval_ms={} dominant_phase={} presets={} out={}",
+        "- ts={} mode={} repeat={} rows={} ok={} avg_ttft_ms={} avg_total_ms={} avg_tok_s={} avg_prefill_ms={} avg_decode_eval_ms={} dominant_phase={} presets={} out={} phase_summary={}",
         current_unix_secs(),
         bench_mode.as_str(),
         repeat,
@@ -1501,7 +1642,8 @@ fn append_bench_worklog_summary(
         avg(decode_sum, decode_n),
         dominant_phase,
         preset_digest,
-        out_path
+        out_path,
+        phase_summary_path.unwrap_or("n/a")
     )
     .map_err(|e| format!("worklog追記失敗: {e}"))?;
 
