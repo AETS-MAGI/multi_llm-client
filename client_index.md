@@ -269,6 +269,10 @@ flowchart TB
 - ベンチTSVの phase 集約を自動生成:
   - `<out>_phase_summary.tsv`
   - `mode/preset/max_tokens/phase_signature` ごとの集約平均
+- 既存bench TSVの mode集約後処理を追加:
+  - `--bench-report <input.tsv>`
+  - 既定出力: `<input>_mode_summary.tsv`
+  - `--report-out` で上書き可能
 
 備考:
 - これは `ROCm-MI25-build` 実測（stream+rocprof で `keep_alive>=10s` が安定）の反映。
@@ -290,8 +294,8 @@ flowchart LR
 - built-in benchmark (`--bench` 系)
 - `num_predict` 拡張レンジ sweep（`predict-sweep`）
 - bench結果の `worklog` 自動集約追記
+- bench TSV の phase/mode 集約レポート化（`*_phase_summary.tsv`, `--bench-report`）
 
 次の昇格候補:
-- mode別の統計比較を `multi_llm-client` 単体で出すサブコマンド化
 - MCP から直接 bench 実行・要約取得するための thin API 化
 - `phase_summary` を JSON/Markdown でも出力するレポート層
