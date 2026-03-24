@@ -1483,8 +1483,10 @@ fn write_bench_phase_summary(out_path: &str) -> Result<String, String> {
         }
     };
 
-    for ((mode, preset_effective, requested_preset, num_thread, keep_alive, max_tokens, phase), g) in
-        groups
+    for (
+        (mode, preset_effective, requested_preset, num_thread, keep_alive, max_tokens, phase),
+        g,
+    ) in groups
     {
         writeln!(
             file,
@@ -2033,12 +2035,9 @@ async fn run_benchmark(base_config: &Config, cli: &CliArgs) -> Result<(), String
             None
         }
     };
-    if let Err(e) = append_bench_worklog_summary(
-        &out_path,
-        bench_mode,
-        repeat,
-        phase_summary_path.as_deref(),
-    ) {
+    if let Err(e) =
+        append_bench_worklog_summary(&out_path, bench_mode, repeat, phase_summary_path.as_deref())
+    {
         eprintln!("[bench-warn] worklog summary append failed: {e}");
     }
     Ok(())
