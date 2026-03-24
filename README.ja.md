@@ -161,11 +161,39 @@ cargo run
 - `--num-thread <n|none>`
 - `--stream <true|false>`
 - `--inline-stream <true|false>`
+- `--bench <preset-sweep|thread-sweep|keepalive-sweep|all>`
+- `--out <path>`
+- `--threads <csv>`
+- `--keep-alive-values <csv>`
 - `--quiet`
+
+## Rust内蔵ベンチモード
+
+シェルラッパーを使わず、Rust バイナリ単体で反復 sweep を実行できます。
+
+```bash
+cargo run -- --bench preset-sweep --repeat 3 --prompt "short test"
+cargo run -- --bench thread-sweep --preset gfx900_safe --threads 2,4,6 --repeat 3
+cargo run -- --bench keepalive-sweep --preset gfx900_anchor_baseline --keep-alive-values 10s,30s,5m --repeat 3
+```
+
+TSV 列:
+
+- `ts_unix`, `mode`, `model`, `preset_effective`, `requested_preset`
+- `num_thread`, `keep_alive`, `repeat_idx`
+- `ttft_ms`, `total_ms`, `tok_s`, `response_chars`
+- `keep_alive_observability_min_ok`, `rc`, `error`
+
+出力先:
+
+- 既定: `worklog/bench_<mode>_<unix_ts>.tsv`
+- 上書き: `--out <path>`
 
 ## Phase3 自動ベンチスクリプト
 
 `scripts/phase3_bench.sh` で TSV 出力付きの反復測定を実行できます。
+
+- このスクリプトは Rust 内蔵 `--bench` の薄いラッパーです。
 
 ```bash
 scripts/phase3_bench.sh preset-sweep --repeat 3 --prompt "short test"

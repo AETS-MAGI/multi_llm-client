@@ -32,6 +32,7 @@
   - 推論結果と統計の永続ログ
 - `scripts/phase3_bench.sh`
   - preset/thread/keep_alive の反復測定を TSV へ出力
+  - Rust内蔵 `--bench` の薄いラッパー（運用導線）
 - `worklog/`
   - 変更履歴と計測メモ
 - `README.MD`, `README.ja.md`
@@ -211,6 +212,7 @@ flowchart TB
   - `InferenceStats`（`streaming_response` 追加、`ttft_ms`/`total_ms` 改良）
   - `ollama_inference`（計測開始タイミングを `req.send` 前へ移動）
   - one-shot 実行用 CLI (`--prompt`, `--repeat`, `--preset`, `--num-thread`, `--keep-alive` など)
+  - built-in benchmark CLI (`--bench`, `--out`, `--threads`, `--keep-alive-values`)
   - `num_thread` の設定追加と `options.num_thread` 反映
 - `multi_llm-client/scripts/phase3_bench.sh`
   - Phase3 向け sweep（preset/thread/keep_alive）をスクリプト化
@@ -256,6 +258,31 @@ flowchart TB
   - JSONL ログへ `keep_alive_observability_min_ok` を記録
 - `scripts/phase3_bench.sh` の keepalive 既定セットを安定側へ更新:
   - `10s,30s,5m`
+- Rust 内蔵ベンチモードを追加:
+  - `--bench preset-sweep|thread-sweep|keepalive-sweep|all`
+  - `--out` / `--threads` / `--keep-alive-values`
+  - TSV へ `keep_alive_observability_min_ok` を含めて出力
 
 備考:
 - これは `ROCm-MI25-build` 実測（stream+rocprof で `keep_alive>=10s` が安定）の反映。
+
+## 11. Shell探索からRust昇格までの相関
+
+```mermaid
+flowchart LR
+  A[ROCm-MI25-build<br/>g4-*.sh / path logs] --> B[再現性評価<br/>安定条件の選別]
+  B --> C[昇格候補リスト<br/>preset, sweep, metric schema]
+  C --> D[multi_llm-client<br/>Rust built-in --bench]
+  D --> E[JSONL + TSV<br/>日次比較と回帰監視]
+  E --> F[MI25-tuning-MCP<br/>Agent運用ツール化]
+```
+
+昇格済み:
+- anchor preset（`gfx900_anchor_baseline`, `gfx900_anchor_side1024`）
+- observability guard（`keep_alive >= 10s` 警告 + JSONLフラグ）
+- built-in benchmark (`--bench` 系)
+
+次の昇格候補:
+- phase-window 集計の Rust 化（prefill/decode proxy 指標）
+- `num_predict` 拡張レンジ sweep の内蔵化
+- `worklog` 自動追記（実験条件 + 代表統計の1行要約）

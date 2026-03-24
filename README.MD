@@ -158,18 +158,46 @@ Supported CLI overrides:
 - `--config <path>`
 - `--prompt <text>`
 - `--repeat <n>`
-- `--preset <default|gfx900_safe|gfx900_balanced|gfx900_longctx|gfx900_tinybench>`
 - `--preset <default|gfx900_safe|gfx900_balanced|gfx900_longctx|gfx900_tinybench|gfx900_anchor_baseline|gfx900_anchor_side1024>`
 - `--model <model_name>`
 - `--keep-alive <value|none>`
 - `--num-thread <n|none>`
 - `--stream <true|false>`
 - `--inline-stream <true|false>`
+- `--bench <preset-sweep|thread-sweep|keepalive-sweep|all>`
+- `--out <path>`
+- `--threads <csv>`
+- `--keep-alive-values <csv>`
 - `--quiet`
+
+## Built-in Benchmark Mode (Rust)
+
+You can run repeatable sweeps directly from the Rust binary (without extra shell
+wrappers).
+
+```bash
+cargo run -- --bench preset-sweep --repeat 3 --prompt "short test"
+cargo run -- --bench thread-sweep --preset gfx900_safe --threads 2,4,6 --repeat 3
+cargo run -- --bench keepalive-sweep --preset gfx900_anchor_baseline --keep-alive-values 10s,30s,5m --repeat 3
+```
+
+TSV columns:
+
+- `ts_unix`, `mode`, `model`, `preset_effective`, `requested_preset`
+- `num_thread`, `keep_alive`, `repeat_idx`
+- `ttft_ms`, `total_ms`, `tok_s`, `response_chars`
+- `keep_alive_observability_min_ok`, `rc`, `error`
+
+Output path:
+
+- Default: `worklog/bench_<mode>_<unix_ts>.tsv`
+- Override: `--out <path>`
 
 ## Phase3 Sweep Script
 
 Use `scripts/phase3_bench.sh` to automate repeatable TSV output:
+
+- This script is now a thin wrapper over Rust built-in `--bench`.
 
 ```bash
 scripts/phase3_bench.sh preset-sweep --repeat 3 --prompt "short test"

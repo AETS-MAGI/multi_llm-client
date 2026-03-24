@@ -938,6 +938,51 @@ fn print_effective_config(config: &Config, effective: &EffectiveConfig) {
     println!("log_dir: {}", config.log_dir());
 }
 
+#[derive(Debug, Clone, Copy)]
+enum BenchMode {
+    PresetSweep,
+    ThreadSweep,
+    KeepaliveSweep,
+    All,
+}
+
+impl BenchMode {
+    fn from_cli(value: &str) -> Option<Self> {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "preset-sweep" => Some(Self::PresetSweep),
+            "thread-sweep" => Some(Self::ThreadSweep),
+            "keepalive-sweep" => Some(Self::KeepaliveSweep),
+            "all" => Some(Self::All),
+            _ => None,
+        }
+    }
+
+    fn all_names() -> &'static [&'static str] {
+        &["preset-sweep", "thread-sweep", "keepalive-sweep", "all"]
+    }
+
+    fn as_str(&self) -> &'static str {
+        match self {
+            Self::PresetSweep => "preset-sweep",
+            Self::ThreadSweep => "thread-sweep",
+            Self::KeepaliveSweep => "keepalive-sweep",
+            Self::All => "all",
+        }
+    }
+}
+
+fn preset_name(preset: &Preset) -> &'static str {
+    match preset {
+        Preset::Default => "default",
+        Preset::Gfx900Safe => "gfx900_safe",
+        Preset::Gfx900Balanced => "gfx900_balanced",
+        Preset::Gfx900Longctx => "gfx900_longctx",
+        Preset::Gfx900Tinybench => "gfx900_tinybench",
+        Preset::Gfx900AnchorBaseline => "gfx900_anchor_baseline",
+        Preset::Gfx900AnchorSide1024 => "gfx900_anchor_side1024",
+    }
+}
+
 #[derive(Debug)]
 struct CliArgs {
     config_path: String,
@@ -951,6 +996,10 @@ struct CliArgs {
     clear_num_thread: bool,
     stream: Option<bool>,
     inline_stream: Option<bool>,
+    bench_mode: Option<BenchMode>,
+    bench_out: Option<String>,
+    bench_threads_csv: Option<String>,
+    bench_keep_alive_csv: Option<String>,
     quiet: bool,
 }
 
@@ -968,6 +1017,10 @@ impl Default for CliArgs {
             clear_num_thread: false,
             stream: None,
             inline_stream: None,
+            bench_mode: None,
+            bench_out: None,
+            bench_threads_csv: None,
+            bench_keep_alive_csv: None,
             quiet: false,
         }
     }
@@ -987,9 +1040,14 @@ fn print_usage() {
          \t--num-thread <n|none>       Override num_thread option (none clears config value)\n\
          \t--stream <true|false>       Override stream mode\n\
          \t--inline-stream <true|false> Override inline_stream mode\n\
+         \t--bench <mode>              Run built-in benchmark mode (one of: {})\n\
+         \t--out <path>                TSV output path for --bench mode\n\
+         \t--threads <csv>             Thread set for --bench thread-sweep (default: 2,4,6)\n\
+         \t--keep-alive-values <csv>   keep_alive set for --bench keepalive-sweep (default: 10s,30s,5m)\n\
          \t--quiet                     Suppress banner and response echo in one-shot mode\n\
          \t-h, --help                  Show this help\n",
-        Preset::all_names().join(", ")
+        Preset::all_names().join(", "),
+        BenchMode::all_names().join(", ")
     );
 }
 
@@ -1129,6 +1187,36 @@ fn parse_cli_args() -> Result<CliArgs, String> {
                     .ok_or_else(|| "--inline-stream requires a value".to_string())?;
                 cli.inline_stream = Some(parse_bool_arg(&value)?);
             }
+            "--bench" => {
+                let value = args
+                    .next()
+                    .ok_or_else(|| "--bench requires a value".to_string())?;
+                let parsed = BenchMode::from_cli(&value).ok_or_else(|| {
+                    format!(
+                        "invalid --bench value: {value} (expected one of: {})",
+                        BenchMode::all_names().join(", ")
+                    )
+                })?;
+                cli.bench_mode = Some(parsed);
+            }
+            "--out" => {
+                let value = args
+                    .next()
+                    .ok_or_else(|| "--out requires a value".to_string())?;
+                cli.bench_out = Some(value);
+            }
+            "--threads" => {
+                let value = args
+                    .next()
+                    .ok_or_else(|| "--threads requires a value".to_string())?;
+                cli.bench_threads_csv = Some(value);
+            }
+            "--keep-alive-values" => {
+                let value = args
+                    .next()
+                    .ok_or_else(|| "--keep-alive-values requires a value".to_string())?;
+                cli.bench_keep_alive_csv = Some(value);
+            }
             "--quiet" => {
                 cli.quiet = true;
             }
@@ -1167,6 +1255,335 @@ fn apply_cli_overrides(config: &mut Config, cli: &CliArgs) {
     }
 }
 
+fn parse_csv_tokens(csv: &str) -> Vec<String> {
+    csv.split(',')
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .collect()
+}
+
+fn parse_threads_csv(csv: &str) -> Result<Vec<u32>, String> {
+    let tokens = parse_csv_tokens(csv);
+    if tokens.is_empty() {
+        return Err("--threads must not be empty".to_string());
+    }
+    let mut out = Vec::new();
+    for t in tokens {
+        let parsed = t
+            .parse::<u32>()
+            .map_err(|_| format!("invalid --threads value: {t}"))?;
+        if parsed == 0 {
+            return Err("--threads must contain values >= 1".to_string());
+        }
+        out.push(parsed);
+    }
+    Ok(out)
+}
+
+fn latest_log_record(log_dir: &str) -> Result<Value, String> {
+    let day_path = format!("{}/infer-{}.jsonl", log_dir, ts_to_ymd(current_unix_secs()));
+    let chosen_path = if Path::new(&day_path).exists() {
+        day_path
+    } else {
+        let mut candidates = Vec::new();
+        let dir = fs::read_dir(log_dir)
+            .map_err(|e| format!("ログディレクトリ読み取り失敗 ({log_dir}): {e}"))?;
+        for ent in dir {
+            let ent = ent.map_err(|e| format!("ログディレクトリエントリ読み取り失敗: {e}"))?;
+            let name = ent.file_name().to_string_lossy().to_string();
+            if name.starts_with("infer-") && name.ends_with(".jsonl") {
+                candidates.push(name);
+            }
+        }
+        candidates.sort();
+        let latest = candidates
+            .last()
+            .ok_or_else(|| format!("推論ログが見つかりません: {log_dir}"))?;
+        format!("{log_dir}/{latest}")
+    };
+
+    let content = fs::read_to_string(&chosen_path)
+        .map_err(|e| format!("推論ログ読み取り失敗 ({chosen_path}): {e}"))?;
+    let line = content
+        .lines()
+        .rev()
+        .find(|l| !l.trim().is_empty())
+        .ok_or_else(|| format!("推論ログが空です: {chosen_path}"))?;
+
+    serde_json::from_str::<Value>(line)
+        .map_err(|e| format!("推論ログJSONパース失敗 ({chosen_path}): {e}"))
+}
+
+fn safe_tsv(s: &str) -> String {
+    s.replace(['\t', '\n', '\r'], " ")
+}
+
+async fn run_bench_case(
+    base_config: &Config,
+    mode: &str,
+    prompt: &str,
+    repeat: u32,
+    requested_preset: Option<Preset>,
+    requested_preset_name: &str,
+    num_thread_override: Option<u32>,
+    keep_alive_override: Option<&str>,
+    out_file: &mut fs::File,
+) -> Result<(), String> {
+    for rep_idx in 1..=repeat {
+        let mut run_config = base_config.clone();
+        run_config.stream = Some(false);
+        run_config.inline_stream = Some(false);
+
+        if let Some(preset) = requested_preset.clone() {
+            run_config.preset = Some(preset);
+            run_config.gfx900_preset = None;
+        }
+        if let Some(t) = num_thread_override {
+            run_config.num_thread = Some(t);
+        }
+        if let Some(keep_alive) = keep_alive_override {
+            run_config.keep_alive = Some(keep_alive.to_string());
+        }
+
+        let app = match App::new(run_config.clone()) {
+            Ok(v) => v,
+            Err(e) => {
+                writeln!(
+                    out_file,
+                    "0\t{}\t{}\t\t{}\t{}\t{}\t{}\t\t\t\t\t\t{}\t1\t{}",
+                    mode,
+                    run_config.model_name,
+                    requested_preset_name,
+                    run_config
+                        .num_thread
+                        .map(|v| v.to_string())
+                        .unwrap_or_else(|| "none".to_string()),
+                    run_config
+                        .keep_alive
+                        .clone()
+                        .unwrap_or_else(|| "none".to_string()),
+                    rep_idx,
+                    "",
+                    safe_tsv(&e)
+                )
+                .map_err(|w| format!("ベンチ行書き込み失敗: {w}"))?;
+                continue;
+            }
+        };
+
+        let response = app.infer(prompt).await;
+        let record = latest_log_record(run_config.log_dir());
+
+        let mut ts_unix = "0".to_string();
+        let mut preset_effective = String::new();
+        let mut ttft_ms = String::new();
+        let mut total_ms = String::new();
+        let mut tok_s = String::new();
+        let mut response_chars = String::new();
+        let mut keep_alive_obs_ok = String::new();
+        let mut error_text = String::new();
+        let mut rc = 0;
+
+        match record {
+            Ok(log) => {
+                if let Some(v) = log.get("ts_unix_secs").and_then(as_u64_flexible) {
+                    ts_unix = v.to_string();
+                }
+                preset_effective = log
+                    .get("effective")
+                    .and_then(|e| e.get("preset"))
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                ttft_ms = log
+                    .get("ttft_ms")
+                    .and_then(as_u64_flexible)
+                    .map(|v| v.to_string())
+                    .unwrap_or_default();
+                total_ms = log
+                    .get("total_ms")
+                    .and_then(as_u64_flexible)
+                    .map(|v| v.to_string())
+                    .unwrap_or_default();
+                tok_s = log
+                    .get("approx_tok_per_sec")
+                    .and_then(|v| v.as_f64())
+                    .map(|v| format!("{v:.4}"))
+                    .unwrap_or_default();
+                response_chars = log
+                    .get("response_chars")
+                    .and_then(as_u64_flexible)
+                    .map(|v| v.to_string())
+                    .unwrap_or_default();
+                keep_alive_obs_ok = match log
+                    .get("keep_alive_observability_min_ok")
+                    .and_then(|v| v.as_bool())
+                {
+                    Some(true) => "true".to_string(),
+                    Some(false) => "false".to_string(),
+                    None => String::new(),
+                };
+
+                if let Some(err) = log.get("error").and_then(|v| v.as_str()) {
+                    if !err.is_empty() {
+                        rc = 1;
+                        error_text = err.to_string();
+                    }
+                }
+            }
+            Err(e) => {
+                rc = 1;
+                error_text = e;
+            }
+        }
+
+        if response.starts_with("[error]") {
+            rc = 1;
+            error_text = response;
+        }
+
+        writeln!(
+            out_file,
+            "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
+            ts_unix,
+            mode,
+            run_config.model_name,
+            preset_effective,
+            requested_preset_name,
+            run_config
+                .num_thread
+                .map(|v| v.to_string())
+                .unwrap_or_else(|| "none".to_string()),
+            run_config
+                .keep_alive
+                .clone()
+                .unwrap_or_else(|| "none".to_string()),
+            rep_idx,
+            ttft_ms,
+            total_ms,
+            tok_s,
+            response_chars,
+            keep_alive_obs_ok,
+            rc,
+            safe_tsv(&error_text)
+        )
+        .map_err(|e| format!("ベンチ行書き込み失敗: {e}"))?;
+    }
+
+    Ok(())
+}
+
+async fn run_benchmark(base_config: &Config, cli: &CliArgs) -> Result<(), String> {
+    let bench_mode = cli
+        .bench_mode
+        .ok_or_else(|| "internal error: bench_mode is not set".to_string())?;
+    let prompt = cli
+        .prompt
+        .clone()
+        .unwrap_or_else(|| "short test".to_string());
+    let repeat = cli.repeat;
+
+    let out_path = cli.bench_out.clone().unwrap_or_else(|| {
+        format!(
+            "worklog/bench_{}_{}.tsv",
+            bench_mode.as_str(),
+            current_unix_secs()
+        )
+    });
+    let out_parent = Path::new(&out_path)
+        .parent()
+        .map(|p| p.to_path_buf())
+        .unwrap_or_else(|| Path::new(".").to_path_buf());
+    fs::create_dir_all(&out_parent)
+        .map_err(|e| format!("ベンチ出力先ディレクトリ作成失敗 ({:?}): {e}", out_parent))?;
+
+    let mut out_file = fs::File::create(&out_path)
+        .map_err(|e| format!("ベンチ出力ファイル作成失敗 ({out_path}): {e}"))?;
+
+    writeln!(
+        out_file,
+        "ts_unix\tmode\tmodel\tpreset_effective\trequested_preset\tnum_thread\tkeep_alive\trepeat_idx\tttft_ms\ttotal_ms\ttok_s\tresponse_chars\tkeep_alive_observability_min_ok\trc\terror"
+    )
+    .map_err(|e| format!("ベンチヘッダ書き込み失敗: {e}"))?;
+
+    let base_preset = cli.preset.clone().unwrap_or_else(|| base_config.preset());
+    let threads_csv = cli.bench_threads_csv.as_deref().unwrap_or("2,4,6");
+    let thread_set = parse_threads_csv(threads_csv)?;
+    let keep_alive_csv = cli.bench_keep_alive_csv.as_deref().unwrap_or("10s,30s,5m");
+    let keep_alive_set = parse_csv_tokens(keep_alive_csv);
+    if keep_alive_set.is_empty() {
+        return Err("--keep-alive-values must not be empty".to_string());
+    }
+
+    let preset_cases = vec![
+        Preset::Gfx900Safe,
+        Preset::Gfx900Balanced,
+        Preset::Gfx900Longctx,
+        Preset::Gfx900Tinybench,
+        Preset::Gfx900AnchorBaseline,
+        Preset::Gfx900AnchorSide1024,
+    ];
+
+    if matches!(bench_mode, BenchMode::PresetSweep | BenchMode::All) {
+        for preset in &preset_cases {
+            run_bench_case(
+                base_config,
+                "preset-sweep",
+                &prompt,
+                repeat,
+                Some(preset.clone()),
+                preset_name(preset),
+                None,
+                None,
+                &mut out_file,
+            )
+            .await?;
+        }
+    }
+
+    if matches!(bench_mode, BenchMode::ThreadSweep | BenchMode::All) {
+        for t in &thread_set {
+            run_bench_case(
+                base_config,
+                "thread-sweep",
+                &prompt,
+                repeat,
+                Some(base_preset.clone()),
+                preset_name(&base_preset),
+                Some(*t),
+                None,
+                &mut out_file,
+            )
+            .await?;
+        }
+    }
+
+    if matches!(bench_mode, BenchMode::KeepaliveSweep | BenchMode::All) {
+        for keep_alive in &keep_alive_set {
+            run_bench_case(
+                base_config,
+                "keepalive-sweep",
+                &prompt,
+                repeat,
+                Some(base_preset.clone()),
+                preset_name(&base_preset),
+                None,
+                Some(keep_alive),
+                &mut out_file,
+            )
+            .await?;
+        }
+    }
+
+    println!(
+        "[bench] mode={} repeat={} out={}",
+        bench_mode.as_str(),
+        repeat,
+        out_path
+    );
+    Ok(())
+}
+
 #[tokio::main]
 async fn main() {
     let cli = match parse_cli_args() {
@@ -1180,6 +1597,13 @@ async fn main() {
 
     let mut config = load_config(&cli.config_path);
     apply_cli_overrides(&mut config, &cli);
+
+    if cli.bench_mode.is_some() {
+        if let Err(e) = run_benchmark(&config, &cli).await {
+            eprintln!("[bench-error] {e}");
+        }
+        return;
+    }
 
     let app = match App::new(config.clone()) {
         Ok(app) => app,
