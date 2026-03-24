@@ -52,6 +52,8 @@ enum Preset {
     Gfx900Balanced,
     Gfx900Longctx,
     Gfx900Tinybench,
+    Gfx900AnchorBaseline,
+    Gfx900AnchorSide1024,
 }
 
 impl Default for Preset {
@@ -68,6 +70,8 @@ impl Preset {
             "gfx900_balanced" => Some(Self::Gfx900Balanced),
             "gfx900_longctx" => Some(Self::Gfx900Longctx),
             "gfx900_tinybench" => Some(Self::Gfx900Tinybench),
+            "gfx900_anchor_baseline" => Some(Self::Gfx900AnchorBaseline),
+            "gfx900_anchor_side1024" => Some(Self::Gfx900AnchorSide1024),
             _ => None,
         }
     }
@@ -79,6 +83,8 @@ impl Preset {
             "gfx900_balanced",
             "gfx900_longctx",
             "gfx900_tinybench",
+            "gfx900_anchor_baseline",
+            "gfx900_anchor_side1024",
         ]
     }
 }
@@ -162,6 +168,8 @@ impl Config {
             Preset::Gfx900Balanced => 192,
             Preset::Gfx900Longctx => 128,
             Preset::Gfx900Tinybench => 32,
+            Preset::Gfx900AnchorBaseline => 128,
+            Preset::Gfx900AnchorSide1024 => 128,
         }
     }
 
@@ -176,6 +184,8 @@ impl Config {
             Preset::Gfx900Balanced => Some(4096),
             Preset::Gfx900Longctx => Some(8192),
             Preset::Gfx900Tinybench => Some(2048),
+            Preset::Gfx900AnchorBaseline => Some(8192),
+            Preset::Gfx900AnchorSide1024 => Some(8192),
         }
     }
 
@@ -190,6 +200,8 @@ impl Config {
             Preset::Gfx900Balanced => Some(512),
             Preset::Gfx900Longctx => Some(128),
             Preset::Gfx900Tinybench => Some(64),
+            Preset::Gfx900AnchorBaseline => Some(512),
+            Preset::Gfx900AnchorSide1024 => Some(1024),
         }
     }
 
@@ -450,6 +462,7 @@ struct InferenceLogRecord {
     ttft_ms: Option<u128>,
     total_ms: u128,
     approx_tok_per_sec: Option<f64>,
+    keep_alive_observability_min_ok: Option<bool>,
     error: Option<String>,
     effective: EffectiveConfig,
     ollama_metrics: OllamaFinalMetrics,
@@ -805,6 +818,9 @@ impl App {
             ttft_ms: stats.and_then(|s| s.ttft_ms()),
             total_ms: stats.map(|s| s.total_ms()).unwrap_or(0),
             approx_tok_per_sec: stats.and_then(|s| s.approx_tok_per_sec()),
+            keep_alive_observability_min_ok: keep_alive_observability_min_ok(
+                self.effective.keep_alive.as_deref(),
+            ),
             error,
             effective: self.effective.clone(),
             ollama_metrics: stats.map(|s| s.final_metrics.clone()).unwrap_or_default(),
@@ -985,6 +1001,40 @@ fn parse_bool_arg(value: &str) -> Result<bool, String> {
     }
 }
 
+fn parse_keep_alive_seconds(value: &str) -> Option<u64> {
+    let v = value.trim().to_ascii_lowercase();
+    if v.is_empty() {
+        return None;
+    }
+    if v == "none" {
+        return None;
+    }
+
+    let (num_str, unit) = if let Some(stripped) = v.strip_suffix('s') {
+        (stripped, "s")
+    } else if let Some(stripped) = v.strip_suffix('m') {
+        (stripped, "m")
+    } else if let Some(stripped) = v.strip_suffix('h') {
+        (stripped, "h")
+    } else {
+        (v.as_str(), "s")
+    };
+
+    let n = num_str.parse::<u64>().ok()?;
+    match unit {
+        "s" => Some(n),
+        "m" => n.checked_mul(60),
+        "h" => n.checked_mul(3600),
+        _ => None,
+    }
+}
+
+fn keep_alive_observability_min_ok(keep_alive: Option<&str>) -> Option<bool> {
+    keep_alive
+        .and_then(parse_keep_alive_seconds)
+        .map(|secs| secs >= 10)
+}
+
 fn parse_cli_args() -> Result<CliArgs, String> {
     let mut cli = CliArgs::default();
     let mut args = env::args().skip(1).peekable();
@@ -1141,6 +1191,12 @@ async fn main() {
 
     if !cli.quiet {
         print_effective_config(&config, &app.effective);
+        if let Some(false) = keep_alive_observability_min_ok(app.effective.keep_alive.as_deref()) {
+            eprintln!(
+                "[warn] keep_alive={:?} may make stream+rocprof phase windows unstable; prefer keep_alive>=10s",
+                app.effective.keep_alive
+            );
+        }
     }
 
     if let Some(prompt) = cli.prompt.as_deref() {

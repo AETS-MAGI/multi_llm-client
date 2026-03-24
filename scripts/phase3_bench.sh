@@ -22,7 +22,7 @@ Options:
   --out <path>                  Output TSV path (default: worklog/bench_<mode>_timestamp.tsv)
   --preset <name>               Base preset for thread/keepalive sweep (default: gfx900_safe)
   --threads <csv>               Thread list for thread-sweep (default: 2,4,6)
-  --keep-alive-values <csv>     Keep-alive set for keepalive-sweep (default: 0s,10m)
+  --keep-alive-values <csv>     Keep-alive set for keepalive-sweep (default: 10s,30s,5m)
 
 Environment variables (optional):
   MODEL, PROMPT, REPEAT, OUT, PRESET, THREADS, KEEP_ALIVE_VALUES
@@ -48,7 +48,7 @@ REPEAT="${REPEAT:-3}"
 OUT="${OUT:-worklog/bench_${MODE}_$(date +%Y%m%d_%H%M%S).tsv}"
 PRESET="${PRESET:-gfx900_safe}"
 THREADS_CSV="${THREADS:-2,4,6}"
-KEEP_ALIVE_CSV="${KEEP_ALIVE_VALUES:-0s,10m}"
+KEEP_ALIVE_CSV="${KEEP_ALIVE_VALUES:-10s,30s,5m}"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in

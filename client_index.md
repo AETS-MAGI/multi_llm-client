@@ -12,6 +12,7 @@
   - `config.json` の読み込みと preset 解決
   - Ollama/OpenAI互換/Python への推論呼び出し
   - 推論メトリクス（TTFT/total/tok/s）収集
+  - 観測安定化ガード（`keep_alive` 下限警告）
   - JSONL ログ蓄積
 - 担当しないこと
   - GPUバックエンドの直接制御（rocBLAS/Tensile 直接呼び出し）
@@ -244,3 +245,17 @@ flowchart TB
 - **安定運用の既定値**: `gfx900_safe`（TTFT 安定）
 - **吞吐優先**: `gfx900_balanced`（`tok/s` 高、`longctx` より VRAM 保守的）
 - `gfx900_longctx` は長文脈用途で有効だが、通常運用の既定にはやや重い
+
+## 10. 2026-03-24 Rust 昇格（観測系）
+
+- 新規 preset を追加:
+  - `gfx900_anchor_baseline` (`num_ctx=8192`, `num_batch=512`, `max_tokens=128`)
+  - `gfx900_anchor_side1024` (`num_ctx=8192`, `num_batch=1024`, `max_tokens=128`)
+- `keep_alive` の observability 下限警告:
+  - `keep_alive < 10s` の場合に起動時 warning を表示
+  - JSONL ログへ `keep_alive_observability_min_ok` を記録
+- `scripts/phase3_bench.sh` の keepalive 既定セットを安定側へ更新:
+  - `10s,30s,5m`
+
+備考:
+- これは `ROCm-MI25-build` 実測（stream+rocprof で `keep_alive>=10s` が安定）の反映。

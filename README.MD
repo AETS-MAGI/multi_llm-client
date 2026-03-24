@@ -114,6 +114,14 @@ If `max_tokens`, `num_ctx`, `num_batch` are not explicitly set, values are deriv
 | `gfx900_balanced` | 192 | 4096 | 512 |
 | `gfx900_longctx` | 128 | 8192 | 128 |
 | `gfx900_tinybench` | 32 | 2048 | 64 |
+| `gfx900_anchor_baseline` | 128 | 8192 | 512 |
+| `gfx900_anchor_side1024` | 128 | 8192 | 1024 |
+
+Observability note:
+
+- For stream+rocprof phase-window experiments, `keep_alive` below 10 seconds can
+  make dispatch/phase evidence unstable.
+- The client now emits a warning when effective `keep_alive < 10s`.
 
 ## Runtime Outputs
 
@@ -151,6 +159,7 @@ Supported CLI overrides:
 - `--prompt <text>`
 - `--repeat <n>`
 - `--preset <default|gfx900_safe|gfx900_balanced|gfx900_longctx|gfx900_tinybench>`
+- `--preset <default|gfx900_safe|gfx900_balanced|gfx900_longctx|gfx900_tinybench|gfx900_anchor_baseline|gfx900_anchor_side1024>`
 - `--model <model_name>`
 - `--keep-alive <value|none>`
 - `--num-thread <n|none>`
@@ -165,7 +174,7 @@ Use `scripts/phase3_bench.sh` to automate repeatable TSV output:
 ```bash
 scripts/phase3_bench.sh preset-sweep --repeat 3 --prompt "short test"
 scripts/phase3_bench.sh thread-sweep --repeat 3 --preset gfx900_safe --threads 2,4,6
-scripts/phase3_bench.sh keepalive-sweep --repeat 3 --keep-alive-values 0s,10m
+scripts/phase3_bench.sh keepalive-sweep --repeat 3 --keep-alive-values 10s,30s,5m
 ```
 
 Output TSV (default): `worklog/bench_<mode>_YYYYmmdd_HHMMSS.tsv`

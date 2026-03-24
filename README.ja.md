@@ -112,6 +112,14 @@ cargo run
 | `gfx900_balanced` | 192 | 4096 | 512 |
 | `gfx900_longctx` | 128 | 8192 | 128 |
 | `gfx900_tinybench` | 32 | 2048 | 64 |
+| `gfx900_anchor_baseline` | 128 | 8192 | 512 |
+| `gfx900_anchor_side1024` | 128 | 8192 | 1024 |
+
+観測メモ:
+
+- stream+rocprof の phase-window 実験では、`keep_alive` が 10 秒未満だと
+  dispatch/phase 証跡が不安定になる場合があります。
+- クライアントは effective `keep_alive < 10s` のとき警告を表示します。
 
 ## 実行時出力
 
@@ -147,7 +155,7 @@ cargo run
 - `--config <path>`
 - `--prompt <text>`
 - `--repeat <n>`
-- `--preset <default|gfx900_safe|gfx900_balanced|gfx900_longctx|gfx900_tinybench>`
+- `--preset <default|gfx900_safe|gfx900_balanced|gfx900_longctx|gfx900_tinybench|gfx900_anchor_baseline|gfx900_anchor_side1024>`
 - `--model <model_name>`
 - `--keep-alive <value|none>`
 - `--num-thread <n|none>`
@@ -162,7 +170,7 @@ cargo run
 ```bash
 scripts/phase3_bench.sh preset-sweep --repeat 3 --prompt "short test"
 scripts/phase3_bench.sh thread-sweep --repeat 3 --preset gfx900_safe --threads 2,4,6
-scripts/phase3_bench.sh keepalive-sweep --repeat 3 --keep-alive-values 0s,10m
+scripts/phase3_bench.sh keepalive-sweep --repeat 3 --keep-alive-values 10s,30s,5m
 ```
 
 既定の出力先: `worklog/bench_<mode>_YYYYmmdd_HHMMSS.tsv`
