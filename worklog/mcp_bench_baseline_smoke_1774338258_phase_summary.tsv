@@ -1,0 +1,2 @@
+mode	preset_effective	requested_preset	num_thread	keep_alive	max_tokens	phase_signature	rows	ok_rows	avg_ttft_ms	avg_total_ms	avg_tok_s	avg_prompt_eval_ms	avg_eval_ms	avg_decode_tok_s_proxy	avg_prefill_decode_ratio
+predict-sweep	gfx900_anchor_baseline	gfx900_anchor_baseline	none	10m	64	prefill+decode	1	1	1508.0000	1884.0000	186.0310	137.3430	344.0290	186.0310	0.3992

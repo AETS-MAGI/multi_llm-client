@@ -1,0 +1,2 @@
+ts_unix	mode	model	preset_effective	requested_preset	num_thread	keep_alive	repeat_idx	ttft_ms	total_ms	tok_s	response_chars	keep_alive_observability_min_ok	rc	error	max_tokens	prompt_eval_count	prompt_eval_ms	eval_count	eval_ms	decode_tok_s_proxy	prefill_decode_ratio	phase_signature
+1774338129	predict-sweep	tinyllama:latest	gfx900_anchor_baseline	gfx900_anchor_baseline	none	10m	1	1382	1820	160.3082	257	true	0		64	38	85.218	64	399.231	160.3082	0.2135	prefill+decode
