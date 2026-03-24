@@ -1,6 +1,6 @@
 # multi_llm-client Code Index (MI25/gfx900)
 
-最終更新: 2026-03-24. 
+最終更新: 2026-03-25. 
 
 対象: `multi_llm-client`（Rust CLI）
 
@@ -33,6 +33,9 @@
 - `scripts/phase3_bench.sh`
   - preset/thread/keep_alive の反復測定を TSV へ出力
   - Rust内蔵 `--bench` の薄いラッパー（運用導線）
+- `scripts/anchor_compare.sh`
+  - baseline (`gfx900_anchor_baseline`) / side (`gfx900_anchor_side1024`) の
+    benchmark・compare・mode report を1本化する運用ラッパー
 - `worklog/`
   - 変更履歴と計測メモ
 - `README.MD`, `README.ja.md`
@@ -216,6 +219,8 @@ flowchart TB
   - `num_thread` の設定追加と `options.num_thread` 反映
 - `multi_llm-client/scripts/phase3_bench.sh`
   - Rust内蔵 `--bench` の薄いラッパーとして運用導線化
+- `multi_llm-client/scripts/anchor_compare.sh`
+  - baseline → side → compare → report までの反復手順を固定化
 
 ## 8. 次にやる最適化（この地図に沿った順）
 

@@ -258,6 +258,16 @@ cargo run -- --bench predict-sweep --preset gfx900_anchor_side1024 --predict-val
 cargo run -- --bench-compare worklog/baseline_phase_summary.tsv --compare-side worklog/side_phase_summary.tsv --compare-out worklog/baseline_vs_side.tsv
 ```
 
+One-shot wrapper (baseline + side + compare + mode reports):
+
+```bash
+scripts/anchor_compare.sh \
+  --model gpt-oss:latest \
+  --repeat 1 \
+  --predict-values 64,128 \
+  --report-format all
+```
+
 Naming convention:
 
 - baseline TSV: `worklog/*baseline*.tsv`
