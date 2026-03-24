@@ -981,6 +981,30 @@ impl BenchMode {
     }
 }
 
+#[derive(Debug, Clone, Copy)]
+enum BenchReportFormat {
+    Tsv,
+    Markdown,
+    Json,
+    All,
+}
+
+impl BenchReportFormat {
+    fn from_cli(value: &str) -> Option<Self> {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "tsv" => Some(Self::Tsv),
+            "markdown" | "md" => Some(Self::Markdown),
+            "json" => Some(Self::Json),
+            "all" => Some(Self::All),
+            _ => None,
+        }
+    }
+
+    fn all_names() -> &'static [&'static str] {
+        &["tsv", "markdown", "json", "all"]
+    }
+}
+
 fn preset_name(preset: &Preset) -> &'static str {
     match preset {
         Preset::Default => "default",
@@ -1013,6 +1037,7 @@ struct CliArgs {
     bench_predict_values_csv: Option<String>,
     bench_report_input: Option<String>,
     bench_report_out: Option<String>,
+    bench_report_format: BenchReportFormat,
     bench_compare_baseline: Option<String>,
     bench_compare_side: Option<String>,
     bench_compare_out: Option<String>,
@@ -1040,6 +1065,7 @@ impl Default for CliArgs {
             bench_predict_values_csv: None,
             bench_report_input: None,
             bench_report_out: None,
+            bench_report_format: BenchReportFormat::Tsv,
             bench_compare_baseline: None,
             bench_compare_side: None,
             bench_compare_out: None,
@@ -1069,6 +1095,7 @@ fn print_usage() {
          \t--predict-values <csv>      max_tokens set for --bench predict-sweep (default: 64,128,256,512,1024)\n\
          \t--bench-report <path>       Build grouped mode summary TSV from an existing bench TSV\n\
          \t--report-out <path>         Output path for --bench-report (default: <input>_mode_summary.tsv)\n\
+         \t--report-format <fmt>       Output format for --bench-report (tsv|markdown|json|all; default: tsv)\n\
          \t--bench-compare <path>      Compare two phase summary TSVs (baseline file path)\n\
          \t--compare-side <path>       Side phase summary TSV for --bench-compare\n\
          \t--compare-out <path>        Output path for --bench-compare (default: <baseline>_vs_<side>.tsv)\n\
@@ -1262,6 +1289,18 @@ fn parse_cli_args() -> Result<CliArgs, String> {
                     .next()
                     .ok_or_else(|| "--report-out requires a value".to_string())?;
                 cli.bench_report_out = Some(value);
+            }
+            "--report-format" => {
+                let value = args
+                    .next()
+                    .ok_or_else(|| "--report-format requires a value".to_string())?;
+                let parsed = BenchReportFormat::from_cli(&value).ok_or_else(|| {
+                    format!(
+                        "invalid --report-format value: {value} (expected one of: {})",
+                        BenchReportFormat::all_names().join(", ")
+                    )
+                })?;
+                cli.bench_report_format = parsed;
             }
             "--bench-compare" => {
                 let value = args
@@ -1573,7 +1612,151 @@ fn write_bench_phase_summary(out_path: &str) -> Result<String, String> {
     Ok(summary_path.display().to_string())
 }
 
-fn write_bench_mode_summary(input_path: &str, report_out: Option<&str>) -> Result<String, String> {
+#[derive(Debug, Clone, Serialize)]
+struct BenchModeSummaryRow {
+    mode: String,
+    preset_effective: String,
+    requested_preset: String,
+    num_thread: String,
+    keep_alive: String,
+    max_tokens: String,
+    rows: u64,
+    ok_rows: u64,
+    prefill_decode_rows: u64,
+    decode_only_rows: u64,
+    prefill_only_rows: u64,
+    unavailable_rows: u64,
+    avg_ttft_ms: Option<f64>,
+    avg_total_ms: Option<f64>,
+    avg_tok_s: Option<f64>,
+    avg_prompt_eval_ms: Option<f64>,
+    avg_eval_ms: Option<f64>,
+    avg_decode_tok_s_proxy: Option<f64>,
+    avg_prefill_decode_ratio: Option<f64>,
+}
+
+#[derive(Debug, Clone, Copy)]
+enum ReportOutputKind {
+    Tsv,
+    Markdown,
+    Json,
+}
+
+fn avg_opt(sum: f64, n: u64) -> Option<f64> {
+    if n == 0 {
+        None
+    } else {
+        Some(sum / n as f64)
+    }
+}
+
+fn fmt_opt4_or_blank(v: Option<f64>) -> String {
+    v.map(|x| format!("{x:.4}")).unwrap_or_default()
+}
+
+fn fmt_opt4_or_dash(v: Option<f64>) -> String {
+    v.map(|x| format!("{x:.4}"))
+        .unwrap_or_else(|| "-".to_string())
+}
+
+fn path_with_ext(path: &str, ext: &str) -> String {
+    Path::new(path).with_extension(ext).display().to_string()
+}
+
+fn write_mode_summary_tsv(path: &str, rows: &[BenchModeSummaryRow]) -> Result<(), String> {
+    let mut file = fs::File::create(path).map_err(|e| format!("bench report TSV作成失敗 ({path}): {e}"))?;
+    writeln!(
+        file,
+        "mode\tpreset_effective\trequested_preset\tnum_thread\tkeep_alive\tmax_tokens\trows\tok_rows\tprefill_decode_rows\tdecode_only_rows\tprefill_only_rows\tunavailable_rows\tavg_ttft_ms\tavg_total_ms\tavg_tok_s\tavg_prompt_eval_ms\tavg_eval_ms\tavg_decode_tok_s_proxy\tavg_prefill_decode_ratio"
+    )
+    .map_err(|e| format!("bench report TSVヘッダ書き込み失敗: {e}"))?;
+
+    for r in rows {
+        writeln!(
+            file,
+            "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
+            r.mode,
+            r.preset_effective,
+            r.requested_preset,
+            r.num_thread,
+            r.keep_alive,
+            r.max_tokens,
+            r.rows,
+            r.ok_rows,
+            r.prefill_decode_rows,
+            r.decode_only_rows,
+            r.prefill_only_rows,
+            r.unavailable_rows,
+            fmt_opt4_or_blank(r.avg_ttft_ms),
+            fmt_opt4_or_blank(r.avg_total_ms),
+            fmt_opt4_or_blank(r.avg_tok_s),
+            fmt_opt4_or_blank(r.avg_prompt_eval_ms),
+            fmt_opt4_or_blank(r.avg_eval_ms),
+            fmt_opt4_or_blank(r.avg_decode_tok_s_proxy),
+            fmt_opt4_or_blank(r.avg_prefill_decode_ratio),
+        )
+        .map_err(|e| format!("bench report TSV行書き込み失敗: {e}"))?;
+    }
+
+    Ok(())
+}
+
+fn write_mode_summary_markdown(path: &str, rows: &[BenchModeSummaryRow]) -> Result<(), String> {
+    let mut file = fs::File::create(path).map_err(|e| format!("bench report Markdown作成失敗 ({path}): {e}"))?;
+    writeln!(file, "# Bench Mode Summary").map_err(|e| format!("bench report Markdown書き込み失敗: {e}"))?;
+    writeln!(file).map_err(|e| format!("bench report Markdown書き込み失敗: {e}"))?;
+    writeln!(
+        file,
+        "| mode | preset_effective | requested_preset | num_thread | keep_alive | max_tokens | rows | ok_rows | phase(prefill/decode/prefill-only/unavail) | avg_ttft_ms | avg_total_ms | avg_tok_s | avg_decode_tok_s_proxy | avg_prefill_decode_ratio |"
+    )
+    .map_err(|e| format!("bench report Markdownヘッダ書き込み失敗: {e}"))?;
+    writeln!(
+        file,
+        "|---|---|---|---|---|---:|---:|---:|---|---:|---:|---:|---:|---:|"
+    )
+    .map_err(|e| format!("bench report Markdownヘッダ書き込み失敗: {e}"))?;
+
+    for r in rows {
+        let phase = format!(
+            "{}/{}/{}/{}",
+            r.prefill_decode_rows, r.decode_only_rows, r.prefill_only_rows, r.unavailable_rows
+        );
+        writeln!(
+            file,
+            "| {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} |",
+            r.mode,
+            r.preset_effective,
+            r.requested_preset,
+            r.num_thread,
+            r.keep_alive,
+            r.max_tokens,
+            r.rows,
+            r.ok_rows,
+            phase,
+            fmt_opt4_or_dash(r.avg_ttft_ms),
+            fmt_opt4_or_dash(r.avg_total_ms),
+            fmt_opt4_or_dash(r.avg_tok_s),
+            fmt_opt4_or_dash(r.avg_decode_tok_s_proxy),
+            fmt_opt4_or_dash(r.avg_prefill_decode_ratio),
+        )
+        .map_err(|e| format!("bench report Markdown行書き込み失敗: {e}"))?;
+    }
+
+    Ok(())
+}
+
+fn write_mode_summary_json(path: &str, rows: &[BenchModeSummaryRow]) -> Result<(), String> {
+    let file = fs::File::create(path).map_err(|e| format!("bench report JSON作成失敗 ({path}): {e}"))?;
+    serde_json::to_writer_pretty(file, rows)
+        .map_err(|e| format!("bench report JSON書き込み失敗 ({path}): {e}"))?;
+    Ok(())
+}
+
+fn write_bench_mode_summary(
+    input_path: &str,
+    report_out: Option<&str>,
+    report_format: BenchReportFormat,
+) -> Result<Vec<String>, String> {
     let content = fs::read_to_string(input_path)
         .map_err(|e| format!("ベンチ結果読み取り失敗 ({input_path}): {e}"))?;
 
@@ -1640,78 +1823,101 @@ fn write_bench_mode_summary(input_path: &str, report_out: Option<&str>) -> Resul
         }
     }
 
-    let out_path = if let Some(v) = report_out {
-        v.to_string()
-    } else {
-        let input = Path::new(input_path);
-        let parent = input.parent().unwrap_or_else(|| Path::new("."));
-        let stem = input
-            .file_stem()
-            .and_then(|s| s.to_str())
-            .ok_or_else(|| format!("bench report入力名解析失敗: {input_path}"))?;
-        parent
-            .join(format!("{stem}_mode_summary.tsv"))
-            .display()
-            .to_string()
-    };
+    let rows: Vec<BenchModeSummaryRow> = groups
+        .into_iter()
+        .map(|((mode, preset_effective, requested_preset, num_thread, keep_alive, max_tokens), g)| {
+            BenchModeSummaryRow {
+                mode,
+                preset_effective,
+                requested_preset,
+                num_thread,
+                keep_alive,
+                max_tokens,
+                rows: g.rows,
+                ok_rows: g.ok_rows,
+                prefill_decode_rows: g.phase_prefill_decode_rows,
+                decode_only_rows: g.phase_decode_only_rows,
+                prefill_only_rows: g.phase_prefill_only_rows,
+                unavailable_rows: g.phase_unavailable_rows,
+                avg_ttft_ms: avg_opt(g.ttft_sum, g.ttft_n),
+                avg_total_ms: avg_opt(g.total_sum, g.total_n),
+                avg_tok_s: avg_opt(g.tok_sum, g.tok_n),
+                avg_prompt_eval_ms: avg_opt(g.prompt_eval_sum, g.prompt_eval_n),
+                avg_eval_ms: avg_opt(g.eval_sum, g.eval_n),
+                avg_decode_tok_s_proxy: avg_opt(g.decode_tok_sum, g.decode_tok_n),
+                avg_prefill_decode_ratio: avg_opt(g.ratio_sum, g.ratio_n),
+            }
+        })
+        .collect();
 
-    let out_parent = Path::new(&out_path)
-        .parent()
-        .unwrap_or_else(|| Path::new("."));
-    fs::create_dir_all(out_parent).map_err(|e| {
-        format!(
-            "bench report出力先ディレクトリ作成失敗 ({:?}): {e}",
-            out_parent
-        )
-    })?;
+    let input = Path::new(input_path);
+    let parent = input.parent().unwrap_or_else(|| Path::new("."));
+    let stem = input
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .ok_or_else(|| format!("bench report入力名解析失敗: {input_path}"))?;
+    let default_tsv = parent
+        .join(format!("{stem}_mode_summary.tsv"))
+        .display()
+        .to_string();
 
-    let mut file = fs::File::create(&out_path)
-        .map_err(|e| format!("bench report TSV作成失敗 ({out_path}): {e}"))?;
-
-    writeln!(
-        file,
-        "mode\tpreset_effective\trequested_preset\tnum_thread\tkeep_alive\tmax_tokens\trows\tok_rows\tprefill_decode_rows\tdecode_only_rows\tprefill_only_rows\tunavailable_rows\tavg_ttft_ms\tavg_total_ms\tavg_tok_s\tavg_prompt_eval_ms\tavg_eval_ms\tavg_decode_tok_s_proxy\tavg_prefill_decode_ratio"
-    )
-    .map_err(|e| format!("bench reportヘッダ書き込み失敗: {e}"))?;
-
-    let avg = |sum: f64, n: u64| -> String {
-        if n == 0 {
-            String::new()
-        } else {
-            format!("{:.4}", sum / (n as f64))
+    let outputs: Vec<(ReportOutputKind, String)> = match report_format {
+        BenchReportFormat::Tsv => {
+            vec![(ReportOutputKind::Tsv, report_out.unwrap_or(&default_tsv).to_string())]
+        }
+        BenchReportFormat::Markdown => {
+            let path = if let Some(v) = report_out {
+                v.to_string()
+            } else {
+                parent
+                    .join(format!("{stem}_mode_summary.md"))
+                    .display()
+                    .to_string()
+            };
+            vec![(ReportOutputKind::Markdown, path)]
+        }
+        BenchReportFormat::Json => {
+            let path = if let Some(v) = report_out {
+                v.to_string()
+            } else {
+                parent
+                    .join(format!("{stem}_mode_summary.json"))
+                    .display()
+                    .to_string()
+            };
+            vec![(ReportOutputKind::Json, path)]
+        }
+        BenchReportFormat::All => {
+            let tsv = report_out.unwrap_or(&default_tsv).to_string();
+            let md = path_with_ext(&tsv, "md");
+            let json = path_with_ext(&tsv, "json");
+            vec![
+                (ReportOutputKind::Tsv, tsv),
+                (ReportOutputKind::Markdown, md),
+                (ReportOutputKind::Json, json),
+            ]
         }
     };
 
-    for ((mode, preset_effective, requested_preset, num_thread, keep_alive, max_tokens), g) in
-        groups
-    {
-        writeln!(
-            file,
-            "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
-            mode,
-            preset_effective,
-            requested_preset,
-            num_thread,
-            keep_alive,
-            max_tokens,
-            g.rows,
-            g.ok_rows,
-            g.phase_prefill_decode_rows,
-            g.phase_decode_only_rows,
-            g.phase_prefill_only_rows,
-            g.phase_unavailable_rows,
-            avg(g.ttft_sum, g.ttft_n),
-            avg(g.total_sum, g.total_n),
-            avg(g.tok_sum, g.tok_n),
-            avg(g.prompt_eval_sum, g.prompt_eval_n),
-            avg(g.eval_sum, g.eval_n),
-            avg(g.decode_tok_sum, g.decode_tok_n),
-            avg(g.ratio_sum, g.ratio_n),
-        )
-        .map_err(|e| format!("bench report 行書き込み失敗: {e}"))?;
+    let mut generated_paths = Vec::new();
+    for (kind, path) in outputs {
+        let out_parent = Path::new(&path).parent().unwrap_or_else(|| Path::new("."));
+        fs::create_dir_all(out_parent).map_err(|e| {
+            format!(
+                "bench report出力先ディレクトリ作成失敗 ({:?}): {e}",
+                out_parent
+            )
+        })?;
+
+        match kind {
+            ReportOutputKind::Tsv => write_mode_summary_tsv(&path, &rows)?,
+            ReportOutputKind::Markdown => write_mode_summary_markdown(&path, &rows)?,
+            ReportOutputKind::Json => write_mode_summary_json(&path, &rows)?,
+        }
+        generated_paths.push(path);
     }
 
-    Ok(out_path)
+    Ok(generated_paths)
 }
 
 #[derive(Default, Clone)]
@@ -2565,8 +2771,16 @@ async fn main() {
     }
 
     if let Some(input_path) = cli.bench_report_input.as_deref() {
-        match write_bench_mode_summary(input_path, cli.bench_report_out.as_deref()) {
-            Ok(path) => println!("[bench-report] out={path}"),
+        match write_bench_mode_summary(
+            input_path,
+            cli.bench_report_out.as_deref(),
+            cli.bench_report_format,
+        ) {
+            Ok(paths) => {
+                for path in paths {
+                    println!("[bench-report] out={path}");
+                }
+            }
             Err(e) => eprintln!("[bench-report-error] {e}"),
         }
         return;
