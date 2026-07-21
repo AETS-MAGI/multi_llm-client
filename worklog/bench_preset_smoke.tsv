@@ -1,0 +1,5 @@
+ts_unix	mode	model	preset_effective	requested_preset	num_thread	keep_alive	repeat_idx	ttft_ms	total_ms	tok_s	response_chars	rc	error
+1774282812	preset-sweep	tinyllama:latest	gfx900_safe	gfx900_safe	none	10m	1	1444	2101	214.20916033075017	463	0	 
+1774282814	preset-sweep	tinyllama:latest	gfx900_balanced	gfx900_balanced	none	10m	1	1517	2557	200.2701314461951	720	0	 
+1774282817	preset-sweep	tinyllama:latest	gfx900_longctx	gfx900_longctx	none	10m	1	1797	2453	212.65007305427127	463	0	 
+1774282819	preset-sweep	tinyllama:latest	gfx900_tinybench	gfx900_tinybench	none	10m	1	1530	1742	164.7582444613633	104	0	 

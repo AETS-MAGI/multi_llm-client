@@ -1,206 +1,324 @@
-# **ローカルLLM推論環境**
+# multi_llm-client (AETS-MAGI fork)
 
-このリポジトリは、ローカル環境で大規模言語モデル（LLM）を実行するためのセットアップを提供します。
-モデルはHugging Face形式（`.safetensors`や`.bin`）で保存されており、Pythonスクリプトを使用して推論を行います。
+Japanese version: [README.ja.md](./README.ja.md)
 
-## 【朗報】りもこ、Rust初心者
+Lightweight Rust CLI client for local LLM inference.
+This fork is focused on reproducible experiments with Ollama, especially on ROCm `gfx900` (Radeon Instinct MI25).
 
-ちょっと脇道に逸れますが、こういう感じのことも書いとこうと思います。  
-というのも、昨年（2024年）、とある用事で80年代のCで書かれたプログラムを見ていて、当時のプログラマーの人たちのあたたかなコメントアウトがとても温かく、そしておもしろかったののが印象的で、自分もそういう感じにしよーと思ったからです。  
-当時は雑誌や電話、郵便でのコミュニケーションが主流だったからか、コメントアウトにもいろんなことが書いてありました。 
-「わからない時に助けてもらった、今度お酒でも持っていきます！」とか、そういうことも。  
-いまはネットでなんでもできますが、そういう技術者どうしのあたたかい交流とかっていう部分、いまだにありますよね。わたしは好きです。   
-そこで交わされていたエンジニアどうしの人間的なやりとりが、なんか心にぐっときたっていうか。そんな感じです。  
+## Overview
 
-ちなみに、いまも、ネットの海の中にはこういう古いコードが漂ってますが、読んでみるとおもろいです。
+`multi_llm-client` sends prompts to a local or compatible inference endpoint and provides:
 
-実際、Cもコーディング規約が微妙に変わってきているので、当時のコードそのままでは動きませんでした。  
-他人が書いたコード、ましてやCなので、けっこうやっかいでした。  
-でも、そんなコードを読み解き、現代のCコンパイラにあわせた仕様に書き換えるときにも、途中にあるユーモアと愛に溢れたコメントに、だいぶ助けられました。  
+- Streaming and non-streaming response handling
+- Preset-based runtime tuning for `gfx900`
+- Effective configuration printout at startup
+- Basic inference metrics (`TTFT`, `total_ms`, `tok/s` when available)
+- JSONL logging for repeatable benchmark workflows
 
-で、そんなコードを見ていて、自分もそういう感じにしてみたいなーと思ったんです。  
-なので、今回は  READMEにこういうコメントを書いてみたいなーと思ったので書いてみました。
+## What This Fork Adds
 
-## 本当に初心者だよ？
+Compared to the original early version, this fork adds:
 
-まぁ、Rustはちょこちょこは触ってたけど、ちゃんと作るのはじめてです。  
-なので、りもこはRust初心者です。**まじです**。  
-・・・でも異論は認めます。たぶん。
+- Hardened HTTP error handling (status checks for Ollama/OpenAI-compatible endpoints)
+- Stable parsing path for `stream=false` responses
+- `preset`-based parameter control (`default`, `gfx900_safe`, etc.)
+- Backward compatibility with legacy `gfx900_preset`
+- `python_command` support (default `python3`, fallback to `python`)
+- Daily JSONL inference logs in configurable `log_dir`
 
-で、今回は・・・
+## Requirements
 
-「Rustの実装はo3-miniさんにいっぱいアドバイスもらいながらやったよ！」  
-「でも設計と方向性はりもこが決めたよ！」  
-「それを形にするのにRustを勉強しながら頑張ったよ！」  
-「それでできたものがこれだよ！」  
-「ぜひ遊んでね！」  
+- Linux
+- Rust (recent stable via `rustup`)
+- Ollama running locally (`http://127.0.0.1:11434` by default)
+- Optional: ROCm + `gfx900` GPU for MI25 experiments
 
-って感じです。**ビバOpenAI!**
+## Quick Start
 
-## 🚀 Rust初心者りもこの今回の学びポイント！
-このプロジェクトを通して、りもこはこんなことを学んだよ！
-
-- Rustの型システムがめちゃくちゃしっかりしてる（安心感がやばい！）
-- C/C++よりメモリ管理が楽ちん！ 
-- 変数の所有権（Ownership）とライフタイム（Lifetime）がとにかく便利！
-- C/C++で心が折れた人にも試してほしい！！  
-- `async/await` での非同期処理も便利！    
-- `reqwest` でAPI通信を簡単にできるのもよき！
-
-全体的には、
-
-「CやC++のような低レベル言語でやっていたことが、Rustではこうやってやれるんだ！」 
-
-ってなことがわかって、個人的には大満足でした！  
-正直、C/C++やSwiftを触っていた人にはRustはとっつきやすいと思います。
-まぁ、もちろん「自分でガリガリメモリ管理してるぜ！」って感じはあんまりないけど、でもこれはこれでアリ！  
-そう思えるし、何より書いててめっちゃ楽しい！
-
-*技術で遊ぶのは楽しい！*  
-*それを形にするのにRustは最適かもしれん！*
-
-そう思ったのでしたー。
-
----
-
-## **特徴**
-
-- **ローカル推論対応**
-    - `.safetensors`や`.bin`形式のモデルを利用してプライバシーを確保しつつ推論可能。
-- **柔軟なカスタマイズ**
-    - `config.json`でモデルや推論パラメータを簡単に設定可能。
-- **Hugging Face Transformers対応**
-    - Transformersライブラリを使用してモデルをロード＆推論。
-
-特に今回は、「APIの種類を判別してリクエストの形を変える」という部分がこだわりポイントです。
-
----
-
-## **LLMのファイル構成例**
-
-Hugging Faceのモデルページから以下のモデルをDLしたと仮定して・・・  
-https://huggingface.co/rinna/nekomata-7b/tree/main
-
-ファイル構成例は以下の通りです。
-```
-.
-├── LICENSE                          # ライセンス情報
-├── NOTICE                           # ライセンスに関する追加情報
-├── README.md                        # このREADMEファイル
-├── config.json                      # 推論設定ファイル
-├── configuration_qwen.py            # モデル設定スクリプト
-├── cpp_kernels.py                   # カスタムCUDAカーネル（高速化用）
-├── model-00001-of-00002.safetensors # safetensors形式のモデルデータ（分割1）
-├── model-00002-of-00002.safetensors # safetensors形式のモデルデータ（分割2）
-├── model.safetensors.index.json     # safetensorsモデルのインデックスファイル
-├── modeling_qwen.py                 # モデルアーキテクチャ定義
-├── pytorch_model-00001-of-00002.bin # PyTorch形式のモデルデータ（分割1）
-├── pytorch_model-00002-of-00002.bin # PyTorch形式のモデルデータ（分割2）
-├── pytorch_model.bin.index.json     # PyTorchモデルのインデックスファイル
-├── qwen.tiktoken                    # トークナイザ関連ファイル
-├── qwen_generation_utils.py         # 推論処理用ユーティリティスクリプト
-├── rinna.png                        # サンプル画像またはロゴ？
-├── tokenizer_config.json            # トークナイザ設定ファイル
-└── cache_autogptq_cuda_*            # 自動生成されるCUDAキャッシュファイル
-```
-
-
-### **主要ファイル例**
-
-- `config.json`
-推論に必要な設定（モデル名、エンドポイントなど）を記述したJSONファイル。
-
-### **モデルデータの例**
-以下はRinna(nekomata-7b)を使用する場合の例です。  
-Hugging Faceのモデルページからモデルデータをダウンロードしてください。  
-
-https://huggingface.co/rinna/nekomata-7b/tree/main
-
-ダウンロードしたモデルデータは、`models`フォルダに配置してください。   
-
-- `model-00001-of-00002.safetensors`, `model-00002-of-00002.safetensors`
-モデルデータ（safetensors形式）。複数ファイルに分割されています。
-- `pytorch_model-00001-of-00002.bin`, `pytorch_model-00002-of-00002.bin`
-モデルデータ（PyTorch形式）。
-- `tokenizer_config.json`
-トークナイザの設定ファイル。
-
-
-### **スクリプト**
-
-- `qwen_generation_utils.py`
-推論処理に必要なユーティリティ関数を含むスクリプト。
-- `configuration_qwen.py`, `modeling_qwen.py`
-モデルの設定やアーキテクチャに関連するコード。
-
----
-
-## **セットアップ**
-
-### **1. 必要なライブラリのインストール**
-
-以下のコマンドで必要なPythonライブラリをインストールします：
+1. Ensure Rust toolchain is available from rustup.
 
 ```bash
-pip install torch transformers safetensors
+export PATH="$HOME/.cargo/bin:$PATH"
+cargo --version
 ```
 
+2. Configure `config.json`.
 
-### **2. モデルデータの配置**
+3. Run the client.
 
-モデルデータ（`.safetensors`または`.bin`）がリポジトリ内に存在することを確認してください。必要に応じて、Hugging Face Hubなどからダウンロードしてください。
+```bash
+cargo run
+```
 
----
+4. In the prompt, type text and press Enter. Use `/bye` or empty line to exit.
 
-## **使い方**
-
-### **1. 設定ファイルの編集**
-
-`config.json` を編集し、使用するモデルやパラメータを指定します。以下はサンプルです：
+## Example `config.json`
 
 ```json
 {
-  "model_name": "qwen",
-  "max_tokens": 128,
-  "temperature": 0.7
+  "model_name": "tinyllama:latest",
+  "endpoint": "http://127.0.0.1:11434/api/generate",
+  "use_local_model": true,
+  "local_framework": "ollama",
+  "openai_compatible": false,
+  "max_tokens": null,
+  "api_key": null,
+  "stream": true,
+  "inline_stream": true,
+  "temperature": 0.0,
+  "num_ctx": null,
+  "num_batch": null,
+  "num_thread": null,
+  "keep_alive": "10m",
+  "request_timeout_secs": 300,
+  "connect_timeout_secs": 5,
+  "preset": "gfx900_safe",
+  "python_command": "python3",
+  "log_dir": "logs"
 }
 ```
 
+## Configuration Reference
 
-### **2. 推論の実行**
+| Key | Type | Default | Description |
+|---|---|---|---|
+| `model_name` | string | required | Model name for backend |
+| `endpoint` | string or null | `http://127.0.0.1:11434/api/generate` | Target endpoint |
+| `use_local_model` | bool | `true` | Use local backend path |
+| `local_framework` | `ollama`/`python` | `ollama` | Local backend selection |
+| `openai_compatible` | bool | `false` | Use OpenAI-compatible request/response path |
+| `max_tokens` | number or null | preset-based | `num_predict` equivalent |
+| `api_key` | string or null | `null` | Bearer token when needed |
+| `stream` | bool | `true` | Transport mode |
+| `inline_stream` | bool | `true` | Render streaming tokens inline in CLI |
+| `temperature` | number or null | `null` | Sampling temperature |
+| `num_ctx` | number or null | preset-based | Context size override |
+| `num_batch` | number or null | preset-based | Batch size override |
+| `num_thread` | number or null | `null` | `options.num_thread` override for Ollama |
+| `keep_alive` | string or null | `10m` | Ollama keep-alive |
+| `request_timeout_secs` | number | `300` | Request timeout |
+| `connect_timeout_secs` | number | `5` | Connect timeout |
+| `preset` | string | `default` | Runtime preset |
+| `gfx900_preset` | bool | `false` | Legacy compatibility key |
+| `python_command` | string | `python3` | Python executable |
+| `log_dir` | string | `logs` | JSONL output directory |
 
-以下のコマンドで推論スクリプトを実行します：
+## Presets
 
-```bash
-python qwen_generation_utils.py --prompt "Why is the sky blue?"
+If `max_tokens`, `num_ctx`, `num_batch` are not explicitly set, values are derived from `preset`.
+
+| Preset | max_tokens | num_ctx | num_batch |
+|---|---:|---:|---:|
+| `default` | 256 | null | null |
+| `gfx900_safe` | 128 | 4096 | 256 |
+| `gfx900_balanced` | 192 | 4096 | 512 |
+| `gfx900_longctx` | 128 | 8192 | 128 |
+| `gfx900_tinybench` | 32 | 2048 | 64 |
+| `gfx900_anchor_baseline` | 128 | 8192 | 512 |
+| `gfx900_anchor_side1024` | 128 | 8192 | 1024 |
+
+Observability note:
+
+- For stream+rocprof phase-window experiments, `keep_alive` below 10 seconds can
+  make dispatch/phase evidence unstable.
+- The client now emits a warning when effective `keep_alive < 10s`.
+
+## Runtime Outputs
+
+At startup, the client prints effective settings (model, preset, stream mode, resolved limits, timeouts).
+
+Each inference prints a metrics line such as:
+
+```text
+[stats] ttft=152ms total=3120ms output_chars=384 eval_count=96 tok/s=28.40
 ```
 
-結果が標準出力に表示されます。
+Logs are stored as JSONL:
 
----
+- Path: `log_dir/infer-YYYY-MM-DD.jsonl`
+- One record per inference
+- Includes prompt/response lengths, timing, effective config, and Ollama final metrics
 
-## **カスタマイズ**
+## Non-Interactive Mode
 
-### **1. モデルの切り替え**
+For scripted benchmarks, use one-shot mode:
 
-`config.json` の `"model_name"` を変更することで、別のモデルを使用できます。
+```bash
+./target/debug/multi_llm_client \
+  --prompt "short test" \
+  --preset gfx900_safe \
+  --stream false \
+  --inline-stream false \
+  --num-thread 4 \
+  --repeat 3
+```
 
-### **2. パラメータ調整**
+Supported CLI overrides:
 
-以下のパラメータを変更することで、生成結果をカスタマイズできます：
+- `--config <path>`
+- `--prompt <text>`
+- `--repeat <n>`
+- `--preset <default|gfx900_safe|gfx900_balanced|gfx900_longctx|gfx900_tinybench|gfx900_anchor_baseline|gfx900_anchor_side1024>`
+- `--model <model_name>`
+- `--keep-alive <value|none>`
+- `--num-thread <n|none>`
+- `--stream <true|false>`
+- `--inline-stream <true|false>`
+- `--bench <preset-sweep|thread-sweep|keepalive-sweep|predict-sweep|all>`
+- `--out <path>`
+- `--threads <csv>`
+- `--keep-alive-values <csv>`
+- `--predict-values <csv>`
+- `--bench-report <path>`
+- `--report-out <path>`
+- `--report-format <tsv|markdown|json|all>`
+- `--bench-compare <path>`
+- `--compare-side <path>`
+- `--compare-out <path>`
+- `--quiet`
 
-- `"max_tokens"`: 出力されるトークン数の最大値。
-- `"temperature"`: テキスト生成時のランダム性（低いほど決定的な応答）。
+## Built-in Benchmark Mode (Rust)
 
----
+You can run repeatable sweeps directly from the Rust binary (without extra shell
+wrappers).
 
-## **注意事項**
+```bash
+cargo run -- --bench preset-sweep --repeat 3 --prompt "short test"
+cargo run -- --bench thread-sweep --preset gfx900_safe --threads 2,4,6 --repeat 3
+cargo run -- --bench keepalive-sweep --preset gfx900_anchor_baseline --keep-alive-values 10s,30s,5m --repeat 3
+cargo run -- --bench predict-sweep --preset gfx900_anchor_baseline --predict-values 64,128,256,512,1024 --repeat 3
+cargo run -- --bench-report worklog/bench_predict_phaseagg_smoke.tsv
+cargo run -- --bench-report worklog/bench_predict_phaseagg_smoke.tsv --report-format markdown
+cargo run -- --bench-report worklog/bench_predict_phaseagg_smoke.tsv --report-format all --report-out worklog/bench_predict_mode_summary.tsv
+cargo run -- --bench-compare worklog/bench_predict_phaseagg_smoke_phase_summary.tsv --compare-side worklog/bench_predict_side_smoke_phase_summary.tsv
+```
 
-1. モデルサイズが非常に大きいため、十分なメモリとディスク容量が必要です。
-2. 推論速度はハードウェア性能（特にGPU）に依存します。GPUがない場合、推論が遅くなる可能性があります。
+TSV columns:
 
----
+- `ts_unix`, `mode`, `model`, `preset_effective`, `requested_preset`
+- `num_thread`, `keep_alive`, `repeat_idx`
+- `ttft_ms`, `total_ms`, `tok_s`, `response_chars`
+- `keep_alive_observability_min_ok`, `rc`, `error`
+- `max_tokens`, `prompt_eval_count`, `prompt_eval_ms`, `eval_count`, `eval_ms`
+- `decode_tok_s_proxy`, `prefill_decode_ratio`, `phase_signature`
 
-## **ライセンス**
+Output path:
 
-このプロジェクトは、それぞれのライセンス条件に従って利用できます。
+- Default: `worklog/bench_<mode>_<unix_ts>.tsv`
+- Override: `--out <path>`
+- Companion grouped summary (auto-generated):
+  - `<out>_phase_summary.tsv`
+  - grouped by `mode/preset/max_tokens/phase_signature`
+  - includes averaged `ttft/total/tok_s` and prefill/decode proxy metrics
+- Mode-level report (post-process command):
+  - `--bench-report <input.tsv>` to generate `<input>_mode_summary.tsv`
+  - optional output override via `--report-out <path>`
+  - output format via `--report-format <tsv|markdown|json|all>`
+  - when `--report-format all`, `<report-out>` を基準に `.tsv/.md/.json` を同時生成
+- Baseline vs side comparison (phase summary):
+  - `--bench-compare <baseline_phase_summary.tsv> --compare-side <side_phase_summary.tsv>`
+  - optional output override via `--compare-out <path>`
+  - includes deltas/ratios for `ttft`, `total`, `tok_s`, decode proxy, and prefill/decode ratio
+
+Auto summary:
+
+- After each bench run, a one-line aggregate summary is appended to:
+  - `worklog/bench_auto_summary_YYYY-MM-DD.md`
+
+## Phase3 Sweep Script
+
+Use `scripts/phase3_bench.sh` to automate repeatable TSV output:
+
+- This script is now a thin wrapper over Rust built-in `--bench`.
+
+```bash
+scripts/phase3_bench.sh preset-sweep --repeat 3 --prompt "short test"
+scripts/phase3_bench.sh thread-sweep --repeat 3 --preset gfx900_safe --threads 2,4,6
+scripts/phase3_bench.sh keepalive-sweep --repeat 3 --keep-alive-values 10s,30s,5m
+scripts/phase3_bench.sh predict-sweep --repeat 3 --preset gfx900_anchor_baseline --predict-values 64,128,256,512,1024
+```
+
+Output TSV (default): `worklog/bench_<mode>_YYYYmmdd_HHMMSS.tsv`
+
+## Recommended gfx900 Benchmark Flow
+
+1. Fix prompt/template and model.
+2. Use `temperature: 0.0` for stable comparisons.
+3. Keep preset fixed, then vary one parameter at a time (`num_batch`, `num_ctx`, `max_tokens`).
+4. Compare TTFT/total/tok/s from JSONL logs.
+5. Record external GPU telemetry (`rocm-smi`, `nvtop`) in parallel.
+
+## Canonical Baseline/Side Flow
+
+Use the same command order for every anchor comparison:
+
+```bash
+cargo run -- --bench predict-sweep --preset gfx900_anchor_baseline --predict-values 64,128 --repeat 1 --out worklog/baseline.tsv
+cargo run -- --bench predict-sweep --preset gfx900_anchor_side1024 --predict-values 64,128 --repeat 1 --out worklog/side.tsv
+cargo run -- --bench-compare worklog/baseline_phase_summary.tsv --compare-side worklog/side_phase_summary.tsv --compare-out worklog/baseline_vs_side.tsv
+```
+
+One-shot wrapper (baseline + side + compare + mode reports):
+
+```bash
+scripts/anchor_compare.sh \
+  --model gpt-oss:latest \
+  --repeat 1 \
+  --predict-values 64,128 \
+  --report-format all
+```
+
+Naming convention:
+
+- baseline TSV: `worklog/*baseline*.tsv`
+- side TSV: `worklog/*side*.tsv`
+- compare TSV: `worklog/*_vs_*.tsv` or `worklog/*compare*.tsv`
+
+## Promotion Criteria (Shell -> Rust)
+
+Promote workflow logic from shell probes into Rust only when all are true:
+
+1. Reproduced at least 3 times with the same interpretation.
+2. Core metrics are stable (`ttft`, `total`, `tok/s`, dispatch-related flags).
+3. It is reused as an ongoing operational flow, not a one-off probe.
+
+## Troubleshooting
+
+### `Cargo.lock` version error on older cargo
+
+If you see lockfile version errors, your shell may still resolve `/usr/bin/cargo` first.
+
+```bash
+export PATH="$HOME/.cargo/bin:$PATH"
+cargo --version
+```
+
+### HTTP 404 / model not found
+
+Check model availability in Ollama:
+
+```bash
+ollama list
+```
+
+### Connection refused
+
+Ensure Ollama is running and endpoint matches `config.json`:
+
+```bash
+curl http://127.0.0.1:11434/api/tags
+```
+
+### Python backend command not found
+
+Set `python_command` explicitly, e.g. `python3`.
+
+## Project Scope
+
+This repository is currently focused on practical local inference and tuning workflows.
+It is not a full-featured chat platform; it is a lightweight experimentation client.
+
+## License
+
+No explicit license file is currently included in this repository snapshot.
+Set a repository license before broad external redistribution.
